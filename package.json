@@ -1,0 +1,11 @@
+{
+  "name": "arrayscope-tdc-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke": "node browser-smoke.mjs",
+    "test": "node protocol.test.mjs",
+    "start": "node server.mjs"
+  }
+}

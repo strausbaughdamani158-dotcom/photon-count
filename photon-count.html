@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>ArrayScope - 光子计数上位机</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./photon-count.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div>
+        <p>32 × 32 PHOTON COUNT CONSOLE</p>
+        <h1>ArrayScope · 光子计数采集</h1>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span id="serialSupport" class="support-text">正在检测 Web Serial...</span>
+      <a class="debug-toggle mode-link" href="./index.html">计时模式</a>
+      <a class="debug-toggle mode-link" href="./single-range.html">单点测距</a>
+      <button id="communicationDebugTrigger" class="debug-toggle" type="button">通信调试</button>
+      <div id="connectionBadge" class="status-box">
+        <i></i>
+        <div><b>串口</b><small>未连接</small></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout count-layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-title">
+          <h2>串口连接</h2>
+          <span id="portInfo">等待设备</span>
+        </div>
+        <label class="field">
+          <span>波特率</span>
+          <select id="baudRate">
+            <option value="115200" selected>115200</option>
+            <option value="230400">230400</option>
+            <option value="460800">460800</option>
+            <option value="921600">921600</option>
+            <option value="1000000">1000000</option>
+            <option value="2000000">2000000</option>
+          </select>
+        </label>
+        <div class="button-row">
+          <button id="connectBtn" class="button primary" type="button">选择并连接串口</button>
+          <button id="disconnectBtn" class="button" type="button" disabled>断开</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <h2>START / END 计数窗口</h2>
+          <span>发送至 FPGA</span>
+        </div>
+        <label class="field">
+          <span>曝光时间窗口</span>
+          <div class="input-unit">
+            <input id="countWindowUs" type="number" value="10" min="0.1"
+              max="1000000" step="0.1">
+            <b>μs</b>
+          </div>
+        </label>
+        <div class="command-preview">
+          <span>发送命令</span>
+          <code id="windowCommandPreview">SET_COUNT_WINDOW 10.000us</code>
+        </div>
+        <button id="sendWindowBtn" class="button primary full" type="button" disabled>
+          设置计数窗口并发送
+        </button>
+        <p class="help-text">当前生效窗口：<b id="activeWindowLabel">10 μs</b></p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <h2>显示方式</h2>
+          <span>32 × 32</span>
+        </div>
+        <div class="view-switch" role="group" aria-label="计数显示方式">
+          <button id="numericViewBtn" class="view-option active" type="button">计数数字</button>
+          <button id="imageViewBtn" class="view-option" type="button">灰度成像</button>
+        </div>
+        <p class="formula">灰度值直接对应 8-bit 光子计数：0 为黑，255 为白。</p>
+      </section>
+
+      <section class="panel gate-panel">
+        <div class="panel-title">
+          <h2>采集控制</h2>
+          <span id="laneProgress">16 路</span>
+        </div>
+        <label class="field">
+          <span>采集帧率</span>
+          <div class="input-unit">
+            <input id="frameRateHz" type="number" value="100" min="1" max="500" step="1">
+            <b>Hz</b>
+          </div>
+        </label>
+        <div id="acquisitionState" class="gate-state waiting">
+          <i></i>
+          <div><strong>采集状态</strong></div>
+        </div>
+        <button id="clearDataBtn" class="button full" type="button">清空计数数据</button>
+      </section>
+
+      <section id="actualSerialPanel" class="panel io-panel is-hidden">
+        <div class="panel-title">
+          <div>
+            <span class="section-label">SERIAL INPUT</span>
+            <h2>串口通信</h2>
+          </div>
+          <button id="clearActualBtn" class="text-button" type="button">清空</button>
+        </div>
+        <textarea id="actualSerialData" readonly spellcheck="false"
+          placeholder="这里显示发送到 FPGA 的窗口命令和串口接收到的原始数据。"></textarea>
+        <footer><span id="actualByteCount">RX 0 B</span><span>16-bit HEX</span></footer>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <div class="metrics count-metrics">
+        <article><span>完整帧数</span><strong id="frameCount">0</strong><small>16 路组成一帧</small></article>
+        <article><span>计数窗口</span><strong id="windowMetric">10</strong><small>当前生效值 / μs</small></article>
+        <article><span>当前总计数</span><strong id="totalCount">0</strong><small>1024 像素求和</small></article>
+        <article><span>最大计数</span><strong id="maxCount">0</strong><small id="maxPixel">R0C0</small></article>
+        <article><span>平均计数</span><strong id="averageCount">0</strong><small>每像素</small></article>
+        <article><span>输入字节</span><strong id="rxBytes">0 B</strong><small id="lastRxLabel">尚未收到输入</small></article>
+      </div>
+
+      <section class="panel count-panel">
+        <div class="chart-header">
+          <div>
+            <span class="section-label">PHOTON COUNT MATRIX</span>
+            <h2 id="matrixTitle">32 × 32 光子计数</h2>
+          </div>
+          <div class="chart-actions">
+            <span id="viewModeTag" class="tag">计数数字</span>
+            <button id="exportDataBtn" class="button small" type="button">导出数据</button>
+          </div>
+        </div>
+        <div class="matrix-scroll">
+          <div id="countMatrix" class="count-matrix numeric" role="grid"
+            aria-label="32乘32光子计数矩阵"></div>
+        </div>
+        <footer class="matrix-footer">
+          <span>每个像素取 11-bit 数据的高 8 bit</span>
+          <span>低 3 bit 忽略</span>
+          <span>计数范围 0～255</span>
+        </footer>
+      </section>
+
+      <section class="panel io-panel acquisition count-frame-panel">
+        <div class="panel-title">
+          <div>
+            <span class="section-label">CHIP ACQUISITION OUTPUT</span>
+            <h2>芯片采集接收帧</h2>
+          </div>
+          <button id="clearSimulatedBtn" class="text-button" type="button">清空</button>
+        </div>
+        <textarea id="simulatedSerialData" readonly spellcheck="false"
+          placeholder="采集开始后，这里显示 O12 至 O3132 的完整计数帧。"></textarea>
+        <footer>
+          <span id="simulatedFrameCount">0 帧</span>
+          <span>16 路 × 64 个 16-bit HEX / 帧</span>
+        </footer>
+      </section>
+    </section>
+  </main>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <script type="module" src="./photon-count.js"></script>
+</body>
+</html>

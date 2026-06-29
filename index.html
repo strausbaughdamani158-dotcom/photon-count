@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>ArrayScope - 电激励上位机</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div>
+        <p>32 × 32 TDC TEST CONSOLE</p>
+        <h1>ArrayScope · 电激励采集</h1>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span id="serialSupport" class="support-text">正在检测 Web Serial...</span>
+      <a class="debug-toggle mode-link" href="./photon-count.html">光子计数</a>
+      <a class="debug-toggle mode-link" href="./single-range.html">单点测距</a>
+      <button id="communicationDebugTrigger" class="debug-toggle" type="button">通信调试</button>
+      <div id="connectionBadge" class="status-box">
+        <i></i>
+        <div><b>串口</b><small>未连接</small></div>
+      </div>
+      <button id="chipPerformanceIndicator" class="performance-indicator" type="button"
+        aria-label="状态参数">60</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-title">
+          <h2>串口连接</h2>
+          <span id="portInfo">等待设备</span>
+        </div>
+        <label class="field">
+          <span>波特率</span>
+          <select id="baudRate">
+            <option value="115200" selected>115200</option>
+            <option value="230400">230400</option>
+            <option value="460800">460800</option>
+            <option value="921600">921600</option>
+            <option value="1000000">1000000</option>
+            <option value="2000000">2000000</option>
+          </select>
+        </label>
+        <div class="button-row">
+          <button id="connectBtn" class="button primary" type="button">选择并连接串口</button>
+          <button id="disconnectBtn" class="button" type="button" disabled>断开</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <h2>STOP / END 激励</h2>
+          <span>发送至 FPGA</span>
+        </div>
+        <label class="field">
+          <span>理论 TOF 时间间隔</span>
+          <div class="input-unit">
+            <input id="theoreticalTime" type="number" value="100" min="0" max="304.84375" step="0.15625">
+            <b>ns</b>
+          </div>
+        </label>
+        <div class="command-preview">
+          <span>发送命令</span>
+          <code id="commandPreview">SET_TOF 100.00000ns</code>
+        </div>
+        <button id="sendTofBtn" class="button primary full" type="button" disabled>设置 TOF 并发送</button>
+        <p class="help-text">当前生效 TOF：<b id="activeTofLabel">100 ns</b></p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <h2>峰值固定误差校准</h2>
+          <span>应用于直方图</span>
+        </div>
+        <label class="field">
+          <span>校准扣除时间</span>
+          <div class="input-unit">
+            <input id="fixedErrorTime" type="number" value="15" min="-320" max="320" step="0.15625">
+            <b>ns</b>
+          </div>
+        </label>
+        <label class="check-line">
+          <input id="applyCalibration" type="checkbox" checked>
+          <span>直方图应用固定误差校准</span>
+        </label>
+        <p class="formula">显示时间 = TDC 解码时间 - 固定误差</p>
+      </section>
+
+      <section class="panel gate-panel">
+        <div class="panel-title">
+          <h2>采集控制</h2>
+          <span>状态与速率</span>
+        </div>
+        <label class="field">
+          <span>采集帧率</span>
+          <div class="input-unit">
+            <input id="frameRateHz" type="number" value="100" min="1" max="500" step="1">
+            <b>Hz</b>
+          </div>
+        </label>
+        <div id="gateState" class="gate-state waiting">
+          <i></i>
+          <div>
+            <strong>采集状态</strong>
+          </div>
+        </div>
+        <button id="clearDataBtn" class="button full" type="button">清空采集数据与直方图</button>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <div class="metrics">
+        <article><span>采集帧数</span><strong id="frameCount">0</strong><small id="frameRateMetric">100 frame/s</small></article>
+        <article><span>设置 TOF</span><strong id="tofMetric">100</strong><small>当前生效值 / ns</small></article>
+        <article><span>原始峰值</span><strong id="rawPeakValue">--</strong><small>解码时间 / ns</small></article>
+        <article><span>校准后峰值</span><strong id="correctedPeakValue">--</strong><small>显示时间 / ns</small></article>
+        <article><span>输入字节</span><strong id="rxBytes">0 B</strong><small id="lastRxLabel">尚未收到输入</small></article>
+        <article><span>空像素数据</span><strong id="noDataCount">0</strong><small>固定值 0x0003</small></article>
+      </div>
+
+      <section class="panel chart-panel">
+        <div class="chart-header">
+          <div>
+            <span class="section-label">O1/2 · R0C0 + R0C1</span>
+            <h2 id="chartTitle">校准后 TDC 时间直方图</h2>
+          </div>
+          <div class="chart-actions">
+            <span id="chartSummary" class="tag">TOF 100 ns · 校准 -15 ns</span>
+            <button id="exportHistogramBtn" class="button small" type="button">导出直方图</button>
+            <button id="exportDataBtn" class="button small" type="button">导出数据</button>
+          </div>
+        </div>
+        <div class="chart-wrap">
+          <canvas id="histogramCanvas" aria-label="电激励 TDC 时间直方图"></canvas>
+          <div id="emptyChart" class="empty-state">
+            <strong>等待采集数据</strong>
+            <span id="emptyChartDetail">当前采集速率 100 Hz</span>
+          </div>
+          <div id="chartTooltip" class="chart-tooltip" hidden></div>
+        </div>
+        <footer class="chart-footer">
+          <span>横轴：时间 / ns（每格 0.15625 ns）</span>
+          <span id="visibleRange">范围：--</span>
+          <span>纵轴：样本计数</span>
+        </footer>
+      </section>
+
+      <section id="ioGrid" class="io-grid actual-hidden">
+        <article id="actualSerialPanel" class="panel io-panel is-hidden">
+          <div class="panel-title">
+            <div>
+              <span class="section-label">REAL SERIAL</span>
+              <h2>真实串口通信</h2>
+            </div>
+            <button id="clearActualBtn" class="text-button" type="button">清空</button>
+          </div>
+          <textarea id="actualSerialData" readonly spellcheck="false"
+            placeholder="这里显示真实发送到 FPGA 的 TOF 命令，以及 FPGA 返回的真实串口字节。"></textarea>
+          <footer><span id="actualByteCount">RX 0 B</span><span>TX / RX 分行显示</span></footer>
+        </article>
+
+        <article class="panel io-panel acquisition">
+          <div class="panel-title">
+            <div>
+              <span class="section-label">CHIP ACQUISITION OUTPUT</span>
+              <h2>芯片采集接收帧</h2>
+            </div>
+            <button id="clearSimulatedBtn" class="text-button" type="button">清空</button>
+          </div>
+          <textarea id="simulatedSerialData" readonly spellcheck="false"
+            placeholder="采集开始后，这里按设定帧率显示 O12 数据。"></textarea>
+          <footer><span id="simulatedFrameCount">0 帧</span><span>64 × 16-bit HEX / 帧</span></footer>
+        </article>
+      </section>
+
+      <details class="panel table-panel collapsible-panel">
+        <summary>
+          <div>
+            <span class="section-label">DECODED SAMPLES</span>
+            <strong>最近采集样本与两段式 TDC 解码</strong>
+          </div>
+          <span>粗计数低电平有效</span>
+        </summary>
+        <div class="collapsible-content">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>帧</th>
+                  <th>像素</th>
+                  <th>16-bit HEX</th>
+                  <th>11-bit 数据</th>
+                  <th>粗计数</th>
+                  <th>精计数</th>
+                  <th>解码时间</th>
+                  <th>校准后</th>
+                </tr>
+              </thead>
+              <tbody id="recentDataBody">
+                <tr class="empty-row"><td colspan="8">暂无采集样本</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="panel formula-panel">
+        <summary>两段式 TDC 计算规则</summary>
+        <div>
+          <code>粗计数 = NOT(高 8 bit)，时间 = 粗计数 × 1.25 ns</code>
+          <code>精计数 = 低 3 bit，时间 = 精计数 × 0.15625 ns</code>
+          <code>总时间 = 粗计数时间 + 精计数时间</code>
+          <p>示例：0001_0011_010 → NOT(0001_0011)=236，精计数=2，总时间=295.3125 ns。</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

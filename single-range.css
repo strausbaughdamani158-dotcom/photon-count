@@ -1,0 +1,140 @@
+.range-layout {
+  grid-template-columns: 306px minmax(760px, 1fr);
+}
+
+.wide-unit input {
+  padding-right: 68px;
+}
+
+.range-metrics {
+  grid-template-columns: repeat(6, minmax(112px, 1fr));
+}
+
+.range-panel {
+  padding: 0;
+}
+
+.range-readout {
+  padding: 18px;
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1fr);
+  gap: 14px;
+  background: #10151b;
+}
+
+.range-primary {
+  min-height: 190px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #151d25;
+}
+
+.range-primary > span,
+.pixel-pair span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.range-primary > div {
+  margin: 10px 0 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.range-primary strong {
+  max-width: 100%;
+  overflow: hidden;
+  color: #8ad7c2;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 46px;
+  font-weight: 700;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.range-primary small {
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 14px;
+}
+
+.range-primary p {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.pixel-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pixel-pair article {
+  min-height: 190px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #171f28;
+}
+
+.pixel-pair strong {
+  margin: 12px 0 8px;
+  overflow: hidden;
+  color: #dbe5ee;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 25px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pixel-pair small {
+  overflow: hidden;
+  color: var(--muted-2);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.range-footer {
+  min-height: 38px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted-2);
+  border-top: 1px solid var(--line);
+  font-size: 8px;
+}
+
+.parsed-panel textarea {
+  height: 230px;
+  white-space: pre;
+}
+
+@media (max-width: 1320px) {
+  .range-layout {
+    grid-template-columns: 286px minmax(720px, 1fr);
+  }
+
+  .range-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .range-readout {
+    grid-template-columns: 1fr;
+  }
+}

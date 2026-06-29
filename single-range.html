@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark">
+  <title>ArrayScope - 单点测距</title>
+  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./single-range.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span><span></span><span></span><span></span>
+      </div>
+      <div>
+        <p>O12 SINGLE POINT RANGING</p>
+        <h1>ArrayScope · 单点测距</h1>
+      </div>
+    </div>
+    <div class="topbar-status">
+      <span id="serialSupport" class="support-text">正在检测 Web Serial...</span>
+      <a class="debug-toggle mode-link" href="./index.html">计时模式</a>
+      <a class="debug-toggle mode-link" href="./photon-count.html">光子计数</a>
+      <button id="communicationDebugTrigger" class="debug-toggle" type="button">通信调试</button>
+      <div id="connectionBadge" class="status-box">
+        <i></i>
+        <div><b>串口</b><small>未连接</small></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout range-layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="panel-title">
+          <h2>串口连接</h2>
+          <span id="portInfo">等待设备</span>
+        </div>
+        <label class="field">
+          <span>波特率</span>
+          <select id="baudRate">
+            <option value="115200" selected>115200</option>
+            <option value="230400">230400</option>
+            <option value="460800">460800</option>
+            <option value="921600">921600</option>
+            <option value="1000000">1000000</option>
+            <option value="2000000">2000000</option>
+          </select>
+        </label>
+        <div class="button-row">
+          <button id="connectBtn" class="button primary" type="button">选择并连接串口</button>
+          <button id="disconnectBtn" class="button" type="button" disabled>断开</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-title">
+          <h2>距离换算</h2>
+          <span>O12 前两个像素</span>
+        </div>
+        <label class="field">
+          <span>固定延迟扣除</span>
+          <div class="input-unit">
+            <input id="fixedDelayNs" type="number" value="0" min="-100000"
+              max="100000" step="0.15625">
+            <b>ns</b>
+          </div>
+        </label>
+        <label class="field">
+          <span>距离系数</span>
+          <div class="input-unit wide-unit">
+            <input id="distanceScaleMmPerNs" type="number" value="149.896229"
+              min="0" max="1000000" step="0.001">
+            <b>mm/ns</b>
+          </div>
+        </label>
+        <p class="formula">距离 = max(平均 TOF - 固定延迟, 0) × 距离系数</p>
+      </section>
+
+      <section class="panel gate-panel">
+        <div class="panel-title">
+          <h2>采集状态</h2>
+          <span id="sampleStateLabel">等待 O12</span>
+        </div>
+        <div id="acquisitionState" class="gate-state waiting">
+          <i></i>
+          <div>
+            <strong>测距状态</strong>
+            <span id="lastLineLabel">尚未解析 O12</span>
+          </div>
+        </div>
+        <button id="clearDataBtn" class="button full" type="button">清空测距数据</button>
+      </section>
+
+      <section id="actualSerialPanel" class="panel io-panel is-hidden">
+        <div class="panel-title">
+          <div>
+            <span class="section-label">REAL SERIAL</span>
+            <h2>串口原始输入</h2>
+          </div>
+          <button id="clearActualBtn" class="text-button" type="button">清空</button>
+        </div>
+        <textarea id="actualSerialData" readonly spellcheck="false"
+          placeholder="这里显示串口接收到的原始字节。"></textarea>
+        <footer><span id="actualByteCount">RX 0 B</span><span>HEX / ASCII</span></footer>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <div class="metrics range-metrics">
+        <article><span>有效样本</span><strong id="validSampleCount">0</strong><small>两个像素均有效</small></article>
+        <article><span>平均 TOF</span><strong id="averageTofMetric">--</strong><small>O12[0] 与 O12[1] / ns</small></article>
+        <article><span>O12[0]</span><strong id="pixel0Metric">--</strong><small id="pixel0Word">--</small></article>
+        <article><span>O12[1]</span><strong id="pixel1Metric">--</strong><small id="pixel1Word">--</small></article>
+        <article><span>无效 O12</span><strong id="invalidFrameCount">0</strong><small id="parseErrorCount">解析错误 0</small></article>
+        <article><span>输入字节</span><strong id="rxBytes">0 B</strong><small id="lastRxLabel">尚未收到输入</small></article>
+      </div>
+
+      <section class="panel range-panel">
+        <div class="chart-header">
+          <div>
+            <span class="section-label">O12 · FIRST TWO PIXELS</span>
+            <h2>单点测距结果</h2>
+          </div>
+          <div class="chart-actions">
+            <span id="measurementStatus" class="tag">等待数据</span>
+            <button id="exportDataBtn" class="button small" type="button">导出数据</button>
+          </div>
+        </div>
+        <div class="range-readout">
+          <div class="range-primary">
+            <span>测试距离</span>
+            <div>
+              <strong id="distanceValue">--</strong>
+              <small id="distanceUnit">m</small>
+            </div>
+            <p id="distanceDetail">等待 O12 前两个像素的有效 TDC 数据</p>
+          </div>
+          <div class="pixel-pair">
+            <article>
+              <span>O12[0] · R0C0</span>
+              <strong id="pixel0Tof">--</strong>
+              <small id="pixel0Raw">--</small>
+            </article>
+            <article>
+              <span>O12[1] · R0C1</span>
+              <strong id="pixel1Tof">--</strong>
+              <small id="pixel1Raw">--</small>
+            </article>
+          </div>
+        </div>
+        <footer class="range-footer">
+          <span>只解析 O12 输出组</span>
+          <span>仅使用前两个 16-bit 字</span>
+          <span>0x0003 视为无效像素</span>
+        </footer>
+      </section>
+
+      <section class="panel io-panel acquisition parsed-panel">
+        <div class="panel-title">
+          <div>
+            <span class="section-label">DECODED O12</span>
+            <h2>解析后的测距数据</h2>
+          </div>
+          <button id="clearParsedBtn" class="text-button" type="button">清空</button>
+        </div>
+        <textarea id="parsedSerialData" readonly spellcheck="false"
+          placeholder="解析到 O12 数据后，这里显示前两个像素的 TOF 和平均值。"></textarea>
+        <footer>
+          <span id="parsedFrameCount">0 条有效样本</span>
+          <span>TOF / 距离实时更新</span>
+        </footer>
+      </section>
+
+      <details class="panel table-panel collapsible-panel">
+        <summary>
+          <div>
+            <span class="section-label">RECENT SAMPLES</span>
+            <strong>最近 O12 单点测距样本</strong>
+          </div>
+          <span>前两个像素平均</span>
+        </summary>
+        <div class="collapsible-content">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>O12[0]</th>
+                  <th>O12[1]</th>
+                  <th>平均 TOF</th>
+                  <th>固定延迟</th>
+                  <th>距离</th>
+                </tr>
+              </thead>
+              <tbody id="recentDataBody">
+                <tr class="empty-row"><td colspan="6">暂无 O12 测距样本</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </details>
+
+      <details class="panel formula-panel">
+        <summary>O12 测距计算规则</summary>
+        <div>
+          <code>像素 0 = O12 第 1 个 16-bit 字，像素 1 = O12 第 2 个 16-bit 字</code>
+          <code>TOF = 粗计数 × 1.25 ns + 精计数 × 0.15625 ns</code>
+          <code>平均 TOF = (像素 0 TOF + 像素 1 TOF) / 2</code>
+          <p>距离系数默认采用光速往返换算后的 149.896229 mm/ns。</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <script type="module" src="./single-range.js"></script>
+</body>
+</html>
