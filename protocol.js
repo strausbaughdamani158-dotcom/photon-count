@@ -293,18 +293,17 @@ export function decodePhotonCountWord(word) {
   return {
     raw16,
     raw11,
-    count: (raw11 >>> 3) & 0xff,
-    ignoredBits: raw11 & 0x07,
+    count: raw11,
+    ignoredBits: 0,
   };
 }
 
-export function encodePhotonCountWord(count, ignoredBits = 3) {
-  const photonCount = Math.max(0, Math.min(255, Math.round(Number(count) || 0)));
-  const lowBits = Number(ignoredBits) & 0x07;
-  const raw11 = (photonCount << 3) | lowBits;
+export function encodePhotonCountWord(count, ignoredBits = 0) {
+  const photonCount = Math.max(0, Math.min(2047, Math.round(Number(count) || 0)));
+  const raw11 = photonCount & CHIP_DATA_MASK;
   return {
     count: photonCount,
-    ignoredBits: lowBits,
+    ignoredBits: 0,
     raw11,
     raw16: raw11,
     hex: `0x${raw11.toString(16).toUpperCase().padStart(4, "0")}`,
@@ -313,10 +312,10 @@ export function encodePhotonCountWord(count, ignoredBits = 3) {
 
 export function wrapPhotonCounter(count) {
   const rawCount = Math.max(0, Math.round(Number(count) || 0));
-  return rawCount % 256;
+  return rawCount % 2048;
 }
 
-export function buildPhotonCountFrame(counts, ignoredBits = 3) {
+export function buildPhotonCountFrame(counts, ignoredBits = 0) {
   if (!counts || counts.length < 32 * 32) {
     throw new Error("光子计数帧需要 1024 个像素值");
   }

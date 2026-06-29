@@ -87,7 +87,7 @@
           <button id="numericViewBtn" class="view-option active" type="button">计数数字</button>
           <button id="imageViewBtn" class="view-option" type="button">灰度成像</button>
         </div>
-        <p class="formula">灰度值直接对应 8-bit 光子计数：0 为黑，255 为白。</p>
+        <p class="formula">灰度值按 11-bit 光子计数映射：0 为黑，2047 为白。</p>
       </section>
 
       <section class="panel gate-panel">
@@ -104,9 +104,17 @@
         </label>
         <div id="acquisitionState" class="gate-state waiting">
           <i></i>
-          <div><strong>采集状态</strong></div>
+          <div>
+            <strong id="acquisitionStateLabel">等待串口数据</strong>
+            <span>采集状态</span>
+          </div>
         </div>
-        <button id="clearDataBtn" class="button full" type="button">清空计数数据</button>
+        <div class="acquisition-actions">
+          <button id="pauseAcquisitionBtn" class="button" type="button" disabled>
+            暂停采集
+          </button>
+          <button id="clearDataBtn" class="button" type="button">清空计数数据</button>
+        </div>
       </section>
 
       <section id="actualSerialPanel" class="panel io-panel is-hidden">
@@ -149,9 +157,9 @@
             aria-label="32乘32光子计数矩阵"></div>
         </div>
         <footer class="matrix-footer">
-          <span>每个像素取 11-bit 数据的高 8 bit</span>
-          <span>低 3 bit 忽略</span>
-          <span>计数范围 0～255</span>
+          <span>每个像素取 11-bit 数据作为光子计数值</span>
+          <span>低 3 bit 不再忽略</span>
+          <span>计数范围 0～2047</span>
         </footer>
       </section>
 

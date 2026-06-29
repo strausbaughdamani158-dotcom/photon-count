@@ -7,6 +7,7 @@ import {
   buildPhotonCountFrame,
   decodePhotonCountWord,
   decodeTwoStageTdc,
+  encodePhotonCountWord,
   encodeTwoStageTdc,
   createBinaryFrame,
   extractBinaryFrames,
@@ -114,12 +115,22 @@ assert.equal(parseO12FirstTwoTdc("CH1: 0003 0004").valid, false);
 
 const photonWord = decodePhotonCountWord(0x07ad);
 assert.equal(photonWord.raw11, 0x07ad);
-assert.equal(photonWord.count, 0xf5);
-assert.equal(photonWord.ignoredBits, 0x05);
+assert.equal(photonWord.count, 0x07ad);
+assert.equal(photonWord.ignoredBits, 0);
+assert.equal(decodePhotonCountWord(0x000a).count, 10);
+assert.equal(decodePhotonCountWord(0x000b).count, 11);
+assert.equal(decodePhotonCountWord(0x07ff).count, 2047);
+
+const encodedPhotonWord = encodePhotonCountWord(2047, 7);
+assert.equal(encodedPhotonWord.count, 2047);
+assert.equal(encodedPhotonWord.ignoredBits, 0);
+assert.equal(encodedPhotonWord.raw11, 0x07ff);
+assert.equal(encodedPhotonWord.raw16, 0x07ff);
+assert.equal(encodedPhotonWord.hex, "0x07FF");
 
 const photonLineWords = Array.from(
   { length: 64 },
-  (_, index) => `0x${(((index & 0xff) << 3) | 0x03)
+  (_, index) => `0x${index
     .toString(16).toUpperCase().padStart(4, "0")}`,
 );
 const photonLine = parsePhotonCountLine(`O12: ${photonLineWords.join(" ")}`);
@@ -128,7 +139,7 @@ assert.equal(photonLine.records.length, 64);
 assert.equal(photonLine.records[0].row, 0);
 assert.equal(photonLine.records[0].col, 0);
 assert.equal(photonLine.records[0].count, 0);
-assert.equal(photonLine.records[0].ignoredBits, 3);
+assert.equal(photonLine.records[0].ignoredBits, 0);
 assert.equal(photonLine.records[31].row, 0);
 assert.equal(photonLine.records[31].col, 31);
 assert.equal(photonLine.records[31].count, 31);
@@ -139,16 +150,16 @@ assert.equal(photonLine.records[63].row, 1);
 assert.equal(photonLine.records[63].col, 0);
 assert.equal(photonLine.records[63].count, 63);
 
-const zeroPhotonLine = parsePhotonCountLine("CH16: 0x0003");
-assert.equal(zeroPhotonLine.records.length, 1);
-assert.equal(zeroPhotonLine.records[0].row, 30);
-assert.equal(zeroPhotonLine.records[0].count, 0);
+const lowPhotonLine = parsePhotonCountLine("CH16: 0x0003");
+assert.equal(lowPhotonLine.records.length, 1);
+assert.equal(lowPhotonLine.records[0].row, 30);
+assert.equal(lowPhotonLine.records[0].count, 3);
 
-const photonCounts = Uint8Array.from(
+const photonCounts = Uint16Array.from(
   { length: 32 * 32 },
-  (_, index) => index & 0xff,
+  (_, index) => index,
 );
-const fullPhotonFrame = buildPhotonCountFrame(photonCounts, 3);
+const fullPhotonFrame = buildPhotonCountFrame(photonCounts);
 assert.equal(fullPhotonFrame.lines.length, 16);
 assert.ok(fullPhotonFrame.lines[0].startsWith("O12:"));
 assert.ok(fullPhotonFrame.lines[15].startsWith("O3132:"));
@@ -159,12 +170,14 @@ assert.equal(parsedFirstPhotonLane.records[31].count, photonCounts[31]);
 assert.equal(parsedFirstPhotonLane.records[32].count, photonCounts[63]);
 assert.equal(parsedFirstPhotonLane.records[63].count, photonCounts[32]);
 assert.ok(
-  parsedFirstPhotonLane.records.every((record) => record.ignoredBits === 3),
+  parsedFirstPhotonLane.records.every((record) => record.ignoredBits === 0),
 );
 assert.equal(wrapPhotonCounter(0), 0);
 assert.equal(wrapPhotonCounter(255), 255);
-assert.equal(wrapPhotonCounter(256), 0);
-assert.equal(wrapPhotonCounter(300), 44);
+assert.equal(wrapPhotonCounter(256), 256);
+assert.equal(wrapPhotonCounter(2047), 2047);
+assert.equal(wrapPhotonCounter(2048), 0);
+assert.equal(wrapPhotonCounter(2348), 300);
 assert.equal(wrapPhotonCounter(-5), 0);
 
 const badPixelConfig = JSON.parse(
@@ -192,18 +205,18 @@ const rightBadPixelCount = badPixelConfig.pixels.filter(
 assert.equal(rightBadPixelCount, 57);
 assert.equal(rightBadPixelCount, badPixelConfig.rightRegion.badPixelCount);
 
-const maskedPhotonCounts = new Uint8Array(32 * 32).fill(87);
+const maskedPhotonCounts = new Uint16Array(32 * 32).fill(87);
 for (const [row, col] of badPixelConfig.pixels) {
   maskedPhotonCounts[row * 32 + col] = 0;
 }
-const maskedPhotonFrame = buildPhotonCountFrame(maskedPhotonCounts, 3);
+const maskedPhotonFrame = buildPhotonCountFrame(maskedPhotonCounts);
 for (const line of maskedPhotonFrame.lines) {
   const parsedLine = parsePhotonCountLine(line);
   for (const record of parsedLine.records) {
     const key = `${record.row},${record.col}`;
     if (badPixelKeys.has(key)) {
       assert.equal(record.count, 0);
-      assert.equal(record.raw16, 0x0003);
+      assert.equal(record.raw16, 0x0000);
     } else {
       assert.equal(record.count, 87);
     }

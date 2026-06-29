@@ -96,6 +96,21 @@
   white-space: pre;
 }
 
+.acquisition-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.gate-state.paused {
+  border-color: rgba(224, 169, 79, 0.45);
+}
+
+.gate-state.paused > i {
+  border-radius: 2px;
+  background: var(--amber);
+}
+
 @media (max-width: 1320px) {
   .count-layout {
     grid-template-columns: 270px minmax(720px, 1fr);

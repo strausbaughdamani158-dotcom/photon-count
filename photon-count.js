@@ -22,6 +22,7 @@ const state = {
   connected: false,
   reading: false,
   hardwareInputDetected: false,
+  acquisitionPaused: false,
   simulationTimer: null,
   renderTimer: null,
   rxBytes: 0,
@@ -29,7 +30,7 @@ const state = {
   lastRxDate: null,
   frameCount: 0,
   activeWindowUs: 10,
-  counts: new Uint8Array(PIXEL_COUNT),
+  counts: new Uint16Array(PIXEL_COUNT),
   badPixelMask: new Uint8Array(PIXEL_COUNT),
   badPixelCount: 0,
   badPixelConfigReady: false,
@@ -200,8 +201,9 @@ function renderMatrix() {
     cell.textContent = String(count);
     cell.title = `R${row}C${col}: ${count}`;
     cell.setAttribute("aria-label", `R${row}C${col} 光子计数 ${count}`);
+    const grayscale = Math.round(count * 255 / 2047);
     cell.style.backgroundColor = state.viewMode === "image"
-      ? `rgb(${count}, ${count}, ${count})`
+      ? `rgb(${grayscale}, ${grayscale}, ${grayscale})`
       : "";
   }
 }
@@ -255,15 +257,29 @@ function updateAcquisitionState() {
   elements.acquisitionState.classList.remove(
     "waiting",
     "running",
+    "paused",
     "disconnected",
   );
   if (!state.connected) {
     elements.acquisitionState.classList.add("disconnected");
+    elements.acquisitionStateLabel.textContent = "未连接";
+  } else if (state.acquisitionPaused) {
+    elements.acquisitionState.classList.add("paused");
+    elements.acquisitionStateLabel.textContent = "采集已暂停";
   } else if (state.hardwareInputDetected) {
     elements.acquisitionState.classList.add("running");
+    elements.acquisitionStateLabel.textContent = "正在采集";
   } else {
     elements.acquisitionState.classList.add("waiting");
+    elements.acquisitionStateLabel.textContent = "等待串口数据";
   }
+  elements.pauseAcquisitionBtn.textContent = state.acquisitionPaused
+    ? "继续采集"
+    : "暂停采集";
+  elements.pauseAcquisitionBtn.classList.toggle(
+    "primary",
+    state.acquisitionPaused,
+  );
 }
 
 function stopSimulation() {
@@ -281,7 +297,9 @@ function pauseSimulationForNoInput() {
 function scheduleNextFrame(forceRestart = false) {
   if (state.simulationTimer && !forceRestart) return;
   if (forceRestart) stopSimulation();
-  if (!state.connected || !state.hardwareInputDetected) return;
+  if (!state.connected
+      || !state.hardwareInputDetected
+      || state.acquisitionPaused) return;
   state.simulationTimer = window.setTimeout(
     simulationTick,
     1000 / getFrameRateHz(),
@@ -290,6 +308,7 @@ function scheduleNextFrame(forceRestart = false) {
 
 function simulationTick() {
   state.simulationTimer = null;
+  if (state.acquisitionPaused) return;
   const inputIsFresh = state.lastRxAt > 0
     && performance.now() - state.lastRxAt <= REAL_RX_HOLD_MS;
   if (!inputIsFresh) {
@@ -304,6 +323,7 @@ function startSimulationFromRealInput() {
   const wasRunning = state.hardwareInputDetected;
   state.hardwareInputDetected = true;
   updateAcquisitionState();
+  if (state.acquisitionPaused) return;
   if (!wasRunning) {
     generateSimulatedFrame();
     scheduleNextFrame();
@@ -543,7 +563,7 @@ function samplePhotonCounter(expectedCount) {
 }
 
 export function generatePhotonCounts(frameNumber) {
-  const counts = new Uint8Array(PIXEL_COUNT);
+  const counts = new Uint16Array(PIXEL_COUNT);
   const exposureScale = state.activeWindowUs / 10;
   updateDynamicSpatialField(frameNumber);
   updateLocalEvents();
@@ -588,10 +608,12 @@ export function generatePhotonCounts(frameNumber) {
 }
 
 function generateSimulatedFrame() {
-  if (!state.connected || !state.hardwareInputDetected) return;
+  if (!state.connected
+      || !state.hardwareInputDetected
+      || state.acquisitionPaused) return;
   state.frameCount += 1;
   state.counts.set(generatePhotonCounts(state.frameCount));
-  const frame = buildPhotonCountFrame(state.counts, 3);
+  const frame = buildPhotonCountFrame(state.counts);
   state.simulatedText =
     `[${timeLabel()}] FRAME ${String(state.frameCount).padStart(6, "0")}\n`
     + `${frame.text}\n`;
@@ -606,13 +628,34 @@ function setConnectionState(connected) {
   elements.connectBtn.disabled = connected || !state.badPixelConfigReady;
   elements.disconnectBtn.disabled = !connected;
   elements.sendWindowBtn.disabled = !connected;
+  elements.pauseAcquisitionBtn.disabled = !connected;
   elements.baudRate.disabled = connected;
   if (!connected) {
     state.lastRxAt = 0;
     state.hardwareInputDetected = false;
+    state.acquisitionPaused = false;
     stopSimulation();
   }
   updateAcquisitionState();
+}
+
+function toggleAcquisitionPause() {
+  if (!state.connected) return;
+
+  state.acquisitionPaused = !state.acquisitionPaused;
+  if (state.acquisitionPaused) {
+    stopSimulation();
+    updateAcquisitionState();
+    showToast("采集已暂停");
+    return;
+  }
+
+  const inputIsFresh = state.lastRxAt > 0
+    && performance.now() - state.lastRxAt <= REAL_RX_HOLD_MS;
+  state.hardwareInputDetected = inputIsFresh;
+  updateAcquisitionState();
+  if (inputIsFresh) scheduleNextFrame();
+  showToast(inputIsFresh ? "采集已继续" : "已继续，等待串口数据", "success");
 }
 
 async function sendCountWindowCommand() {
@@ -783,10 +826,16 @@ function bindEvents() {
   elements.countWindowUs.addEventListener("input", updateWindowCommandPreview);
   elements.sendWindowBtn.addEventListener("click", sendCountWindowCommand);
   elements.frameRateHz.addEventListener("input", () => {
-    if (state.hardwareInputDetected) scheduleNextFrame(true);
+    if (state.hardwareInputDetected && !state.acquisitionPaused) {
+      scheduleNextFrame(true);
+    }
   });
   elements.numericViewBtn.addEventListener("click", () => setViewMode("numeric"));
   elements.imageViewBtn.addEventListener("click", () => setViewMode("image"));
+  elements.pauseAcquisitionBtn.addEventListener(
+    "click",
+    toggleAcquisitionPause,
+  );
   elements.clearDataBtn.addEventListener("click", clearData);
   elements.clearActualBtn.addEventListener("click", () => {
     state.actualText = "";

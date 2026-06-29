@@ -491,7 +491,7 @@ try {
           const col = Number(cell.dataset.col);
           const laneIndex = Math.floor(row / 2);
           const wordIndex = row % 2 === 0 ? col : 63 - col;
-          return lines[laneIndex]?.[wordIndex] === '0x0003';
+          return lines[laneIndex]?.[wordIndex] === '0x0000';
         }),
       };
     })(),
@@ -552,11 +552,12 @@ try {
   const photonFirstWords = photonLines[0]?.match(/0x[0-9A-F]{4}/g) ?? [];
   const photonLastWords = photonLines.at(-1)?.match(/0x[0-9A-F]{4}/g) ?? [];
   const photonFirstCount = photonFirstWords.length
-    ? (Number.parseInt(photonFirstWords[0].slice(2), 16) >>> 3) & 0xff
+    ? Number.parseInt(photonFirstWords[0].slice(2), 16) & 0x07ff
     : -1;
   const photonSecondRowLastCount = photonFirstWords.length
-    ? (Number.parseInt(photonFirstWords[32].slice(2), 16) >>> 3) & 0xff
+    ? Number.parseInt(photonFirstWords[32].slice(2), 16) & 0x07ff
     : -1;
+  const photonFirstGray = Math.round(photonFirstCount * 255 / 2047);
 
   await evaluate(connection, "clearInterval(window.__photonRxFeed); true");
   await delay(550);
@@ -607,15 +608,12 @@ try {
     throw new Error("芯片采集接收帧未包含完整16路数据");
   }
   if (photonSummary.row0col0 !== photonFirstCount
-      || photonSummary.row1col31 !== photonSecondRowLastCount
-      || photonFirstWords.concat(photonLastWords).some(
-        (word) => (Number.parseInt(word.slice(2), 16) & 0x07) !== 3
-      )) {
+      || photonSummary.row1col31 !== photonSecondRowLastCount) {
     throw new Error("光子计数帧编码或蛇形映射异常");
   }
   if (!photonSummary.imageMode || photonSummary.modeTag !== "灰度成像"
       || photonSummary.row0col0Gray
-        !== `rgb(${photonFirstCount}, ${photonFirstCount}, ${photonFirstCount})`) {
+        !== `rgb(${photonFirstGray}, ${photonFirstGray}, ${photonFirstGray})`) {
     throw new Error("光子计数灰度成像切换异常");
   }
   if (photonSummary.spatialStats.unique < 80
@@ -623,7 +621,7 @@ try {
         >= photonSummary.spatialStats.farDifference
       || photonSummary.spatialStats.lowPixels < 20
       || photonSummary.spatialStats.highPixels < 5) {
-    throw new Error("光子计数空间相关噪声或8-bit回卷特征不足");
+    throw new Error("光子计数空间相关噪声或11-bit回卷特征不足");
   }
   if (photonSummary.badPixelStats.configured !== 142
       || photonSummary.badPixelStats.rendered !== 142
