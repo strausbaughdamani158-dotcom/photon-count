@@ -1,5 +1,7 @@
 import {
   buildPhotonCountFrame,
+  decodePhotonCountWord,
+  extractPhotonCountFrames,
   gaussianRandom,
   wrapPhotonCounter,
 } from "./protocol.js";
@@ -23,14 +25,20 @@ const state = {
   reading: false,
   hardwareInputDetected: false,
   acquisitionPaused: false,
+  simulationMode: false,
   simulationTimer: null,
+  rxIdleTimer: null,
   renderTimer: null,
+  rxFrameBuffer: new Uint8Array(0),
   rxBytes: 0,
   lastRxAt: 0,
+  lastFrameAt: 0,
   lastRxDate: null,
   frameCount: 0,
   activeWindowUs: 10,
   counts: new Uint16Array(PIXEL_COUNT),
+  overflowBits: new Uint8Array(PIXEL_COUNT),
+  latestDecodedWords: [],
   badPixelMask: new Uint8Array(PIXEL_COUNT),
   badPixelCount: 0,
   badPixelConfigReady: false,
@@ -107,6 +115,57 @@ function appendActualRx(bytes) {
   appendActualText(
     `[${timeLabel()}] RX  ${hex}${ascii ? `  | ${ascii}` : ""}\n`,
   );
+}
+
+function scheduleRealInputIdle() {
+  if (state.rxIdleTimer) window.clearTimeout(state.rxIdleTimer);
+  state.rxIdleTimer = window.setTimeout(() => {
+    state.rxIdleTimer = null;
+    if (performance.now() - state.lastFrameAt < REAL_RX_HOLD_MS) return;
+    state.hardwareInputDetected = false;
+    updateAcquisitionState();
+  }, REAL_RX_HOLD_MS);
+}
+
+function applyPhotonCountFrame(dataBytes) {
+  if (state.acquisitionPaused || dataBytes.length === 0) return false;
+
+  const decodedWords = [];
+  for (let index = 0; index < dataBytes.length; index += 2) {
+    const word = (dataBytes[index] << 8) | dataBytes[index + 1];
+    decodedWords.push(decodePhotonCountWord(word));
+  }
+  if (decodedWords.length > PIXEL_COUNT) return false;
+
+  state.counts.fill(0);
+  state.overflowBits.fill(0);
+  for (let index = 0; index < decodedWords.length; index += 1) {
+    state.counts[index] = decodedWords[index].count;
+    state.overflowBits[index] = decodedWords[index].overflowBits;
+  }
+  state.latestDecodedWords = decodedWords;
+  state.frameCount += 1;
+  state.lastFrameAt = performance.now();
+  state.hardwareInputDetected = true;
+
+  const frame = buildPhotonCountFrame(state.counts);
+  state.simulatedText =
+    `[${timeLabel()}] FRAME ${String(state.frameCount).padStart(6, "0")}`
+    + ` · ${decodedWords.length} POINTS\n${frame.text}\n`;
+  updateAcquisitionState();
+  scheduleRealInputIdle();
+  scheduleRender();
+  return true;
+}
+
+function processPhotonSerialBytes(bytes) {
+  const result = extractPhotonCountFrames(state.rxFrameBuffer, bytes);
+  state.rxFrameBuffer = result.remainder;
+  let parsedFrames = 0;
+  for (const dataBytes of result.frames) {
+    if (applyPhotonCountFrame(dataBytes)) parsedFrames += 1;
+  }
+  return parsedFrames;
 }
 
 function appendActualTx(command) {
@@ -192,7 +251,6 @@ function createMatrix() {
 }
 
 function renderMatrix() {
-  applyBadPixelMask(state.counts);
   for (let index = 0; index < PIXEL_COUNT; index += 1) {
     const count = state.counts[index];
     const cell = state.cells[index];
@@ -201,7 +259,7 @@ function renderMatrix() {
     cell.textContent = String(count);
     cell.title = `R${row}C${col}: ${count}`;
     cell.setAttribute("aria-label", `R${row}C${col} 光子计数 ${count}`);
-    const grayscale = Math.round(count * 255 / 2047);
+    const grayscale = count;
     cell.style.backgroundColor = state.viewMode === "image"
       ? `rgb(${grayscale}, ${grayscale}, ${grayscale})`
       : "";
@@ -209,7 +267,6 @@ function renderMatrix() {
 }
 
 function renderMetrics() {
-  applyBadPixelMask(state.counts);
   let total = 0;
   let maximum = 0;
   let maximumIndex = 0;
@@ -297,7 +354,8 @@ function pauseSimulationForNoInput() {
 function scheduleNextFrame(forceRestart = false) {
   if (state.simulationTimer && !forceRestart) return;
   if (forceRestart) stopSimulation();
-  if (!state.connected
+  if (!state.simulationMode
+      || !state.connected
       || !state.hardwareInputDetected
       || state.acquisitionPaused) return;
   state.simulationTimer = window.setTimeout(
@@ -309,27 +367,14 @@ function scheduleNextFrame(forceRestart = false) {
 function simulationTick() {
   state.simulationTimer = null;
   if (state.acquisitionPaused) return;
-  const inputIsFresh = state.lastRxAt > 0
-    && performance.now() - state.lastRxAt <= REAL_RX_HOLD_MS;
+  const inputIsFresh = state.lastFrameAt > 0
+    && performance.now() - state.lastFrameAt <= REAL_RX_HOLD_MS;
   if (!inputIsFresh) {
     pauseSimulationForNoInput();
     return;
   }
   generateSimulatedFrame();
   scheduleNextFrame();
-}
-
-function startSimulationFromRealInput() {
-  const wasRunning = state.hardwareInputDetected;
-  state.hardwareInputDetected = true;
-  updateAcquisitionState();
-  if (state.acquisitionPaused) return;
-  if (!wasRunning) {
-    generateSimulatedFrame();
-    scheduleNextFrame();
-  } else if (!state.simulationTimer) {
-    scheduleNextFrame();
-  }
 }
 
 function normalizeField(field) {
@@ -608,7 +653,8 @@ export function generatePhotonCounts(frameNumber) {
 }
 
 function generateSimulatedFrame() {
-  if (!state.connected
+  if (!state.simulationMode
+      || !state.connected
       || !state.hardwareInputDetected
       || state.acquisitionPaused) return;
   state.frameCount += 1;
@@ -632,8 +678,14 @@ function setConnectionState(connected) {
   elements.baudRate.disabled = connected;
   if (!connected) {
     state.lastRxAt = 0;
+    state.lastFrameAt = 0;
     state.hardwareInputDetected = false;
     state.acquisitionPaused = false;
+    state.rxFrameBuffer = new Uint8Array(0);
+    if (state.rxIdleTimer) {
+      window.clearTimeout(state.rxIdleTimer);
+      state.rxIdleTimer = null;
+    }
     stopSimulation();
   }
   updateAcquisitionState();
@@ -650,11 +702,10 @@ function toggleAcquisitionPause() {
     return;
   }
 
-  const inputIsFresh = state.lastRxAt > 0
-    && performance.now() - state.lastRxAt <= REAL_RX_HOLD_MS;
-  state.hardwareInputDetected = inputIsFresh;
+  const inputIsFresh = state.lastFrameAt > 0
+    && performance.now() - state.lastFrameAt <= REAL_RX_HOLD_MS;
+  state.hardwareInputDetected = false;
   updateAcquisitionState();
-  if (inputIsFresh) scheduleNextFrame();
   showToast(inputIsFresh ? "采集已继续" : "已继续，等待串口数据", "success");
 }
 
@@ -677,9 +728,8 @@ async function sendCountWindowCommand() {
     await writer.write(new TextEncoder().encode(command));
     state.activeWindowUs = windowUs;
     elements.activeWindowLabel.textContent = `${formatNumber(windowUs)} μs`;
-    configurePhotonScene(windowUs);
     appendActualTx(command);
-    clearData();
+    renderMetrics();
     showToast("计数窗口命令已发送", "success");
   } catch (error) {
     showToast(`计数窗口命令发送失败：${error.message}`, "error");
@@ -731,7 +781,7 @@ async function readSerialLoop() {
       state.lastRxAt = performance.now();
       state.lastRxDate = new Date();
       appendActualRx(value);
-      startSimulationFromRealInput();
+      processPhotonSerialBytes(value);
       renderMetrics();
     }
   } catch (error) {
@@ -780,6 +830,8 @@ function setViewMode(mode) {
 
 function clearData() {
   state.counts.fill(0);
+  state.overflowBits.fill(0);
+  state.latestDecodedWords = [];
   state.frameCount = 0;
   state.simulatedText = "";
   elements.simulatedSerialData.value = "";
@@ -826,7 +878,9 @@ function bindEvents() {
   elements.countWindowUs.addEventListener("input", updateWindowCommandPreview);
   elements.sendWindowBtn.addEventListener("click", sendCountWindowCommand);
   elements.frameRateHz.addEventListener("input", () => {
-    if (state.hardwareInputDetected && !state.acquisitionPaused) {
+    if (state.simulationMode
+        && state.hardwareInputDetected
+        && !state.acquisitionPaused) {
       scheduleNextFrame(true);
     }
   });

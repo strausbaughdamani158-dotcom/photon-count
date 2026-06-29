@@ -407,8 +407,18 @@ try {
     "document.getElementById('frameCount').textContent",
   ));
   await evaluate(connection, `
+    window.__photonFrame = [0xAA, 0x55];
+    const photonWords = [0x000A, 0x000B, 0x00FF, 0x0100];
+    while (photonWords.length < 64) photonWords.push(photonWords.length);
+    for (const word of photonWords) {
+      window.__photonFrame.push((word >>> 8) & 0xFF, word & 0xFF);
+    }
+    window.__photonFrame.push(0x5A);
     window.__photonRxFeed = setInterval(
-      () => window.__pushSerial([0x41, 0x43, 0x4B]),
+      () => {
+        window.__pushSerial(window.__photonFrame.slice(0, 37));
+        window.__pushSerial(window.__photonFrame.slice(37));
+      },
       50
     );
     true;
@@ -432,7 +442,11 @@ try {
     windowMetric: document.getElementById('windowMetric').textContent,
     activeWindowLabel: document.getElementById('activeWindowLabel').textContent,
     row0col0: Number(document.querySelector('[data-row="0"][data-col="0"]').textContent),
+    row0col1: Number(document.querySelector('[data-row="0"][data-col="1"]').textContent),
+    row0col2: Number(document.querySelector('[data-row="0"][data-col="2"]').textContent),
+    row0col3: Number(document.querySelector('[data-row="0"][data-col="3"]').textContent),
     row1col31: Number(document.querySelector('[data-row="1"][data-col="31"]').textContent),
+    row2col0: Number(document.querySelector('[data-row="2"][data-col="0"]').textContent),
     row0col0Gray: getComputedStyle(
       document.querySelector('[data-row="0"][data-col="0"]')
     ).backgroundColor,
@@ -501,23 +515,10 @@ try {
   const photonLines = photonSummary.simulatedText
     .split("\n")
     .filter((line) => /^O\d+:/.test(line));
-  const firstTemporalPattern = await evaluate(connection, `
-    [...document.querySelectorAll('.count-cell:not(.bad-pixel)')]
+  const countsBeforeWindowChange = await evaluate(connection, `
+    [...document.querySelectorAll('.count-cell')]
       .map((cell) => Number(cell.textContent))
   `);
-  const sceneRevisionBeforeExposureChange = Number(await evaluate(
-    connection,
-    "document.documentElement.dataset.sceneRevision",
-  ));
-  await delay(180);
-  const laterTemporalPattern = await evaluate(connection, `
-    [...document.querySelectorAll('.count-cell:not(.bad-pixel)')]
-      .map((cell) => Number(cell.textContent))
-  `);
-  const temporalPatternCorrelation = arrayCorrelation(
-    firstTemporalPattern,
-    laterTemporalPattern,
-  );
 
   await evaluate(connection, `
     document.getElementById('countWindowUs').value = '35';
@@ -528,36 +529,23 @@ try {
     true;
   `);
   await waitForCondition(connection, "window.__serialWrites.length === 2", 3000);
-  await waitForCondition(
-    connection,
-    "Number(document.getElementById('frameCount').textContent.replaceAll(',', '')) >= 20",
-    3000,
-  );
   await delay(150);
-  const changedExposurePattern = await evaluate(connection, `
-    [...document.querySelectorAll('.count-cell:not(.bad-pixel)')]
+  const countsAfterWindowChange = await evaluate(connection, `
+    [...document.querySelectorAll('.count-cell')]
       .map((cell) => Number(cell.textContent))
   `);
-  const exposurePatternCorrelation = arrayCorrelation(
-    laterTemporalPattern,
-    changedExposurePattern,
-  );
-  const sceneRevisionAfterExposureChange = Number(await evaluate(
-    connection,
-    "document.documentElement.dataset.sceneRevision",
-  ));
   const secondWindowCommand = await evaluate(connection, `
     new TextDecoder().decode(Uint8Array.from(window.__serialWrites[1] ?? []))
   `);
   const photonFirstWords = photonLines[0]?.match(/0x[0-9A-F]{4}/g) ?? [];
   const photonLastWords = photonLines.at(-1)?.match(/0x[0-9A-F]{4}/g) ?? [];
   const photonFirstCount = photonFirstWords.length
-    ? Number.parseInt(photonFirstWords[0].slice(2), 16) & 0x07ff
+    ? Number.parseInt(photonFirstWords[0].slice(2), 16) & 0xff
     : -1;
   const photonSecondRowLastCount = photonFirstWords.length
-    ? Number.parseInt(photonFirstWords[32].slice(2), 16) & 0x07ff
+    ? Number.parseInt(photonFirstWords[32].slice(2), 16) & 0xff
     : -1;
-  const photonFirstGray = Math.round(photonFirstCount * 255 / 2047);
+  const photonFirstGray = photonFirstCount;
 
   await evaluate(connection, "clearInterval(window.__photonRxFeed); true");
   await delay(550);
@@ -596,7 +584,7 @@ try {
       || photonSummary.activeWindowLabel !== "20 μs"
       || photonSummary.sentWindowCommand !== "SET_COUNT_WINDOW 20.000us\r\n"
       || photonSummary.cellCount !== 1024
-      || photonSummary.frameCount < 30 || photonSummary.laneProgress !== "16 路") {
+      || photonSummary.frameCount < 30 || photonSummary.laneProgress !== "64 点/帧") {
     throw new Error("计数窗口命令、触发门控或完整帧计数异常");
   }
   if (photonLines.length !== 16
@@ -608,35 +596,28 @@ try {
     throw new Error("芯片采集接收帧未包含完整16路数据");
   }
   if (photonSummary.row0col0 !== photonFirstCount
-      || photonSummary.row1col31 !== photonSecondRowLastCount) {
-    throw new Error("光子计数帧编码或蛇形映射异常");
+      || photonSummary.row1col31 !== photonSecondRowLastCount
+      || photonSummary.row0col0 !== 10
+      || photonSummary.row0col1 !== 11
+      || photonSummary.row0col2 !== 255
+      || photonSummary.row0col3 !== 0
+      || photonSummary.row2col0 !== 0) {
+    throw new Error("真实光子计数帧解析、8-bit 解码或 64 点补零异常");
   }
   if (!photonSummary.imageMode || photonSummary.modeTag !== "灰度成像"
       || photonSummary.row0col0Gray
         !== `rgb(${photonFirstGray}, ${photonFirstGray}, ${photonFirstGray})`) {
     throw new Error("光子计数灰度成像切换异常");
   }
-  if (photonSummary.spatialStats.unique < 80
-      || photonSummary.spatialStats.neighborDifference
-        >= photonSummary.spatialStats.farDifference
-      || photonSummary.spatialStats.lowPixels < 20
-      || photonSummary.spatialStats.highPixels < 5) {
-    throw new Error("光子计数空间相关噪声或11-bit回卷特征不足");
-  }
   if (photonSummary.badPixelStats.configured !== 142
       || photonSummary.badPixelStats.rendered !== 142
-      || photonSummary.badPixelStats.rightSide !== 57
-      || !photonSummary.badPixelStats.allNumericZero
-      || !photonSummary.badPixelStats.allImageBlack
-      || !photonSummary.badPixelStats.allFrameWordsZero) {
-    throw new Error("坏点配置未正确应用到计数、灰度图或串口帧");
+      || photonSummary.badPixelStats.rightSide !== 57) {
+    throw new Error("坏点配置样式加载异常");
   }
-  if (temporalPatternCorrelation <= 0.15 || temporalPatternCorrelation >= 0.95
-      || exposurePatternCorrelation >= 0.75
-      || sceneRevisionAfterExposureChange
-        !== sceneRevisionBeforeExposureChange + 1
+  if (JSON.stringify(countsAfterWindowChange)
+        !== JSON.stringify(countsBeforeWindowChange)
       || secondWindowCommand !== "SET_COUNT_WINDOW 35.000us\r\n") {
-    throw new Error("曝光相关场景重建或自然时序噪声模型未生效");
+    throw new Error("SET_COUNT_WINDOW 不应改变真实矩阵计数值");
   }
   if (!photonStateGreen || !photonSummary.stateGreen || !photonStateWaiting
       || photonFramesAtPause !== photonFramesAfterPause
@@ -658,10 +639,6 @@ try {
       firstLaneWords: photonFirstWords.length,
       lastLaneWords: photonLastWords.length,
       stateWaiting: photonStateWaiting,
-      temporalPatternCorrelation,
-      exposurePatternCorrelation,
-      sceneRevisionBeforeExposureChange,
-      sceneRevisionAfterExposureChange,
     },
   }));
 } finally {

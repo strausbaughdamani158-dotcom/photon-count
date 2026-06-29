@@ -87,16 +87,16 @@
           <button id="numericViewBtn" class="view-option active" type="button">计数数字</button>
           <button id="imageViewBtn" class="view-option" type="button">灰度成像</button>
         </div>
-        <p class="formula">灰度值按 11-bit 光子计数映射：0 为黑，2047 为白。</p>
+        <p class="formula">灰度值按低 8bit 光子计数映射：0 为黑，255 为白。</p>
       </section>
 
       <section class="panel gate-panel">
         <div class="panel-title">
           <h2>采集控制</h2>
-          <span id="laneProgress">16 路</span>
+          <span id="laneProgress">64 点/帧</span>
         </div>
         <label class="field">
-          <span>采集帧率</span>
+          <span>演示帧率</span>
           <div class="input-unit">
             <input id="frameRateHz" type="number" value="100" min="1" max="500" step="1">
             <b>Hz</b>
@@ -133,7 +133,7 @@
 
     <section class="workspace">
       <div class="metrics count-metrics">
-        <article><span>完整帧数</span><strong id="frameCount">0</strong><small>16 路组成一帧</small></article>
+        <article><span>完整帧数</span><strong id="frameCount">0</strong><small>AA 55 ... 5A</small></article>
         <article><span>计数窗口</span><strong id="windowMetric">10</strong><small>当前生效值 / μs</small></article>
         <article><span>当前总计数</span><strong id="totalCount">0</strong><small>1024 像素求和</small></article>
         <article><span>最大计数</span><strong id="maxCount">0</strong><small id="maxPixel">R0C0</small></article>
@@ -157,9 +157,9 @@
             aria-label="32乘32光子计数矩阵"></div>
         </div>
         <footer class="matrix-footer">
-          <span>每个像素取 11-bit 数据作为光子计数值</span>
-          <span>低 3 bit 不再忽略</span>
-          <span>计数范围 0～2047</span>
+          <span>每个像素取低 8bit 作为光子计数值</span>
+          <span>计数范围 0～255</span>
+          <span>高于 8bit 的位不作为计数显示</span>
         </footer>
       </section>
 
@@ -172,10 +172,10 @@
           <button id="clearSimulatedBtn" class="text-button" type="button">清空</button>
         </div>
         <textarea id="simulatedSerialData" readonly spellcheck="false"
-          placeholder="采集开始后，这里显示 O12 至 O3132 的完整计数帧。"></textarea>
+          placeholder="收到完整二进制帧后，这里显示解码后的计数帧。"></textarea>
         <footer>
           <span id="simulatedFrameCount">0 帧</span>
-          <span>16 路 × 64 个 16-bit HEX / 帧</span>
+          <span>当前 64 点 / 帧 · 兼容 1024 点</span>
         </footer>
       </section>
     </section>

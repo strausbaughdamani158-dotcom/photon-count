@@ -1,5 +1,6 @@
 export const BINARY_FRAME_SIZE = 16;
 export const FRAME_HEADER = [0xaa, 0x55];
+export const PHOTON_FRAME_TAIL = 0x5a;
 export const CHIP_DATA_MASK = 0x07ff;
 export const CHIP_NO_DATA_VALUE = 0x0003;
 export const CHIP_WORDS_PER_LANE = 64;
@@ -290,20 +291,26 @@ export function parseO12FirstTwoTdc(line) {
 export function decodePhotonCountWord(word) {
   const raw16 = Number(word) & 0xffff;
   const raw11 = raw16 & CHIP_DATA_MASK;
+  const count = raw11 & 0xff;
+  const overflowBits = raw11 >>> 8;
+
   return {
     raw16,
     raw11,
-    count: raw11,
-    ignoredBits: 0,
+    count,
+    ignoredBits: overflowBits,
+    overflowBits,
   };
 }
 
 export function encodePhotonCountWord(count, ignoredBits = 0) {
-  const photonCount = Math.max(0, Math.min(2047, Math.round(Number(count) || 0)));
-  const raw11 = photonCount & CHIP_DATA_MASK;
+  const photonCount = Math.max(0, Math.min(255, Math.round(Number(count) || 0)));
+  const raw11 = photonCount & 0xff;
+
   return {
     count: photonCount,
     ignoredBits: 0,
+    overflowBits: 0,
     raw11,
     raw16: raw11,
     hex: `0x${raw11.toString(16).toUpperCase().padStart(4, "0")}`,
@@ -312,7 +319,65 @@ export function encodePhotonCountWord(count, ignoredBits = 0) {
 
 export function wrapPhotonCounter(count) {
   const rawCount = Math.max(0, Math.round(Number(count) || 0));
-  return rawCount % 2048;
+  return rawCount % 256;
+}
+
+export function extractPhotonCountFrames(existingBuffer, incomingBytes) {
+  const first = existingBuffer instanceof Uint8Array
+    ? existingBuffer
+    : new Uint8Array(existingBuffer ?? 0);
+  const second = incomingBytes instanceof Uint8Array
+    ? incomingBytes
+    : new Uint8Array(incomingBytes ?? 0);
+  let buffer = new Uint8Array(first.length + second.length);
+  buffer.set(first);
+  buffer.set(second, first.length);
+
+  const frames = [];
+  let discardedBytes = 0;
+
+  while (buffer.length >= 2) {
+    let headerIndex = -1;
+    for (let index = 0; index < buffer.length - 1; index += 1) {
+      if (buffer[index] === FRAME_HEADER[0]
+          && buffer[index + 1] === FRAME_HEADER[1]) {
+        headerIndex = index;
+        break;
+      }
+    }
+
+    if (headerIndex < 0) {
+      const keepHeaderPrefix = buffer.at(-1) === FRAME_HEADER[0];
+      discardedBytes += buffer.length - (keepHeaderPrefix ? 1 : 0);
+      buffer = keepHeaderPrefix
+        ? buffer.slice(-1)
+        : new Uint8Array(0);
+      break;
+    }
+
+    if (headerIndex > 0) {
+      discardedBytes += headerIndex;
+      buffer = buffer.slice(headerIndex);
+    }
+
+    let tailIndex = -1;
+    for (let index = FRAME_HEADER.length; index < buffer.length; index += 2) {
+      if (buffer[index] === PHOTON_FRAME_TAIL) {
+        tailIndex = index;
+        break;
+      }
+    }
+    if (tailIndex < 0) break;
+
+    frames.push(buffer.slice(FRAME_HEADER.length, tailIndex));
+    buffer = buffer.slice(tailIndex + 1);
+  }
+
+  return {
+    frames,
+    discardedBytes,
+    remainder: buffer,
+  };
 }
 
 export function buildPhotonCountFrame(counts, ignoredBits = 0) {

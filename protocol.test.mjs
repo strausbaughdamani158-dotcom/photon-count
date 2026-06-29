@@ -11,6 +11,7 @@ import {
   encodeTwoStageTdc,
   createBinaryFrame,
   extractBinaryFrames,
+  extractPhotonCountFrames,
   laneWordToPixel,
   parseBinaryFrame,
   parseChipHexLine,
@@ -115,18 +116,53 @@ assert.equal(parseO12FirstTwoTdc("CH1: 0003 0004").valid, false);
 
 const photonWord = decodePhotonCountWord(0x07ad);
 assert.equal(photonWord.raw11, 0x07ad);
-assert.equal(photonWord.count, 0x07ad);
-assert.equal(photonWord.ignoredBits, 0);
+assert.equal(photonWord.count, 0xad);
+assert.equal(photonWord.ignoredBits, 7);
+assert.equal(photonWord.overflowBits, 7);
 assert.equal(decodePhotonCountWord(0x000a).count, 10);
 assert.equal(decodePhotonCountWord(0x000b).count, 11);
-assert.equal(decodePhotonCountWord(0x07ff).count, 2047);
+assert.equal(decodePhotonCountWord(0x00ff).count, 255);
+assert.equal(decodePhotonCountWord(0x0100).count, 0);
+assert.equal(decodePhotonCountWord(0x0100).overflowBits, 1);
+assert.equal(decodePhotonCountWord(0x07ff).count, 255);
 
 const encodedPhotonWord = encodePhotonCountWord(2047, 7);
-assert.equal(encodedPhotonWord.count, 2047);
+assert.equal(encodedPhotonWord.count, 255);
 assert.equal(encodedPhotonWord.ignoredBits, 0);
-assert.equal(encodedPhotonWord.raw11, 0x07ff);
-assert.equal(encodedPhotonWord.raw16, 0x07ff);
-assert.equal(encodedPhotonWord.hex, "0x07FF");
+assert.equal(encodedPhotonWord.overflowBits, 0);
+assert.equal(encodedPhotonWord.raw11, 0x00ff);
+assert.equal(encodedPhotonWord.raw16, 0x00ff);
+assert.equal(encodedPhotonWord.hex, "0x00FF");
+
+let photonBinaryResult = extractPhotonCountFrames(
+  new Uint8Array(0),
+  Uint8Array.from([0x99, 0xaa, 0x55, 0x00, 0x0a, 0x00]),
+);
+assert.equal(photonBinaryResult.frames.length, 0);
+assert.equal(photonBinaryResult.discardedBytes, 1);
+photonBinaryResult = extractPhotonCountFrames(
+  photonBinaryResult.remainder,
+  Uint8Array.from([0x0b, 0x00, 0xff, 0x01, 0x00, 0x5a]),
+);
+assert.equal(photonBinaryResult.frames.length, 1);
+assert.deepEqual(
+  [...photonBinaryResult.frames[0]],
+  [0x00, 0x0a, 0x00, 0x0b, 0x00, 0xff, 0x01, 0x00],
+);
+assert.equal(photonBinaryResult.remainder.length, 0);
+for (const pointCount of [64, 1024]) {
+  const frame = new Uint8Array(2 + pointCount * 2 + 1);
+  frame.set([0xaa, 0x55]);
+  for (let index = 0; index < pointCount; index += 1) {
+    frame[2 + index * 2] = (index >>> 8) & 0x07;
+    frame[3 + index * 2] = index & 0xff;
+  }
+  frame[frame.length - 1] = 0x5a;
+  const extracted = extractPhotonCountFrames(new Uint8Array(0), frame);
+  assert.equal(extracted.frames.length, 1);
+  assert.equal(extracted.frames[0].length, pointCount * 2);
+  assert.equal(extracted.remainder.length, 0);
+}
 
 const photonLineWords = Array.from(
   { length: 64 },
@@ -174,10 +210,10 @@ assert.ok(
 );
 assert.equal(wrapPhotonCounter(0), 0);
 assert.equal(wrapPhotonCounter(255), 255);
-assert.equal(wrapPhotonCounter(256), 256);
-assert.equal(wrapPhotonCounter(2047), 2047);
+assert.equal(wrapPhotonCounter(256), 0);
+assert.equal(wrapPhotonCounter(2047), 255);
 assert.equal(wrapPhotonCounter(2048), 0);
-assert.equal(wrapPhotonCounter(2348), 300);
+assert.equal(wrapPhotonCounter(2348), 44);
 assert.equal(wrapPhotonCounter(-5), 0);
 
 const badPixelConfig = JSON.parse(
