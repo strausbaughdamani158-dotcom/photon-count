@@ -91,11 +91,58 @@
         <p class="formula">灰度值按低 8bit 光子计数映射：0 为黑，255 为白。</p>
       </section>
 
+      <section class="panel background-filter-panel">
+        <div class="panel-title">
+          <h2>背景过滤</h2>
+          <span>作用于解析后的 count</span>
+        </div>
+        <label class="check-line">
+          <input id="backgroundFilterEnabled" type="checkbox" checked>
+          <span>启用背景过滤</span>
+        </label>
+        <label class="field">
+          <span>噪声值屏蔽列表</span>
+          <input id="backgroundNoiseValues" type="text"
+            value="1,2,3,6,12,24,48,96,128,192,240"
+            spellcheck="false" aria-describedby="backgroundFilterHelp">
+        </label>
+        <div class="background-number-fields">
+          <label class="field">
+            <span>背景阈值</span>
+            <input id="backgroundThreshold" type="number" value="0"
+              min="0" max="255" step="1">
+          </label>
+          <label class="field">
+            <span>背景扣除值</span>
+            <input id="backgroundSubtract" type="number" value="0"
+              min="0" max="255" step="1">
+          </label>
+        </div>
+        <button id="applyBackgroundBtn" class="button primary full" type="button">
+          应用背景设置
+        </button>
+        <p id="backgroundFilterHelp" class="help-text background-help">
+          指定噪声值或不高于阈值的像素会置 0；背景扣除后结果不小于 0。
+          屏蔽列表不作用于串口原始字节。
+        </p>
+      </section>
+
       <section class="panel gate-panel">
         <div class="panel-title">
           <h2>采集控制</h2>
           <span id="laneProgress">1024 点/帧</span>
         </div>
+        <label class="field">
+          <span>采集帧率 Hz</span>
+          <div class="input-unit">
+            <input id="frameRateHz" type="number" value="10"
+              min="1" max="60" step="1">
+            <b>Hz</b>
+          </div>
+        </label>
+        <p class="help-text frame-rate-help">
+          真实串口模式下仅限制页面显示刷新上限，不改变 FPGA 实际发送或采集频率。
+        </p>
         <div id="acquisitionState" class="gate-state waiting">
           <i></i>
           <div>
@@ -127,7 +174,7 @@
 
     <section class="workspace">
       <div class="metrics count-metrics">
-        <article><span>完整帧数</span><strong id="frameCount">0</strong><small>固定 2051 字节</small></article>
+        <article><span>显示帧数</span><strong id="frameCount">0</strong><small id="frameCountDetail">已解析 0 个固定帧</small></article>
         <article><span>计数窗口</span><strong id="windowMetric">10</strong><small>当前生效值 / μs</small></article>
         <article><span>当前总计数</span><strong id="totalCount">0</strong><small>1024 像素求和</small></article>
         <article><span>最大计数</span><strong id="maxCount">0</strong><small id="maxPixel">R0C0</small></article>

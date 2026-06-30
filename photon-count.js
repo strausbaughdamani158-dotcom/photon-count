@@ -14,8 +14,11 @@ const FRAME_WIDTH = PHOTON_FRAME_WIDTH;
 const FRAME_HEIGHT = PHOTON_FRAME_HEIGHT;
 const PIXEL_COUNT = PHOTON_PIXEL_COUNT;
 const REAL_RX_HOLD_MS = 400;
-const UI_REFRESH_INTERVAL_MS = 100;
 const MAX_TEXT_CHARS = 50000;
+const DEFAULT_FRAME_RATE_HZ = 10;
+const DEFAULT_BACKGROUND_NOISE_VALUES = Object.freeze([
+  1, 2, 3, 6, 12, 24, 48, 96, 128, 192, 240,
+]);
 
 const elements = typeof document === "undefined"
   ? {}
@@ -31,17 +34,28 @@ const state = {
   hardwareInputDetected: false,
   acquisitionPaused: false,
   rxIdleTimer: null,
-  renderTimer: null,
+  displayFrameTimer: null,
   rxFrameBuffer: new Uint8Array(0),
   rxBytes: 0,
   lastRxAt: 0,
   lastFrameAt: 0,
+  lastDisplayFrameAt: 0,
   lastRxDate: null,
   frameCount: 0,
+  receivedFrameCount: 0,
+  frameRateHz: DEFAULT_FRAME_RATE_HZ,
   activeWindowUs: 10,
+  rawCounts: null,
   counts: new Uint16Array(PIXEL_COUNT),
+  pendingCounts: null,
   overflowBits: new Uint8Array(PIXEL_COUNT),
   latestDecodedWords: [],
+  backgroundFilter: {
+    enabled: true,
+    noiseValues: new Set(DEFAULT_BACKGROUND_NOISE_VALUES),
+    threshold: 0,
+    subtract: 0,
+  },
   badPixelMask: new Uint8Array(PIXEL_COUNT),
   badPixelCount: 0,
   badPixelConfigReady: false,
@@ -64,6 +78,61 @@ function numericValue(element, fallback = 0) {
 
 function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+export function parseBackgroundNoiseValues(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return new Set();
+
+  const values = text.split(/[\s,，;；]+/).filter(Boolean).map(Number);
+  if (values.some(
+    (item) => !Number.isInteger(item) || item < 0 || item > 255,
+  )) {
+    throw new TypeError("噪声值必须是 0～255 之间的整数");
+  }
+  return new Set(values);
+}
+
+export function applyBackgroundFilter(
+  counts,
+  settings = state.backgroundFilter,
+) {
+  const filteredCounts = new Uint16Array(counts.length);
+  if (!settings.enabled) {
+    filteredCounts.set(counts);
+    return filteredCounts;
+  }
+
+  const noiseValues = settings.noiseValues instanceof Set
+    ? settings.noiseValues
+    : new Set(settings.noiseValues ?? []);
+  const threshold = clamp(Number(settings.threshold) || 0, 0, 255);
+  const subtract = clamp(Number(settings.subtract) || 0, 0, 255);
+  for (let index = 0; index < counts.length; index += 1) {
+    const count = counts[index];
+    filteredCounts[index] = noiseValues.has(count) || count <= threshold
+      ? 0
+      : Math.max(0, count - subtract);
+  }
+  return filteredCounts;
+}
+
+export function getDisplayFrameIntervalMs(frameRateHz) {
+  const normalizedRate = Number(frameRateHz);
+  return 1000 / (
+    Number.isFinite(normalizedRate) && normalizedRate > 0
+      ? normalizedRate
+      : DEFAULT_FRAME_RATE_HZ
+  );
+}
+
+export function shouldDisplayFrame(
+  lastDisplayFrameAt,
+  now,
+  frameRateHz,
+) {
+  return lastDisplayFrameAt <= 0
+    || now - lastDisplayFrameAt >= getDisplayFrameIntervalMs(frameRateHz);
 }
 
 function randomRange(minimum, maximum) {
@@ -122,32 +191,84 @@ function scheduleRealInputIdle() {
   }, REAL_RX_HOLD_MS);
 }
 
+function clearDisplayFrameTimer() {
+  if (!state.displayFrameTimer) return;
+  window.clearTimeout(state.displayFrameTimer);
+  state.displayFrameTimer = null;
+}
+
+function updateDisplayedCounts(counts, incrementFrameCount = true) {
+  state.counts.set(counts);
+  state.pendingCounts = null;
+  state.lastDisplayFrameAt = performance.now();
+  if (incrementFrameCount) state.frameCount += 1;
+
+  const frame = buildPhotonCountFrame(state.counts);
+  state.simulatedText =
+    `[${timeLabel()}] FRAME ${String(state.frameCount).padStart(6, "0")}`
+    + ` · ${FRAME_WIDTH}×${FRAME_HEIGHT} · ${state.counts.length} POINTS\n`
+    + `${frame.text}\n`;
+  renderAll();
+}
+
+function displayPendingCounts() {
+  state.displayFrameTimer = null;
+  if (!state.pendingCounts) return;
+  updateDisplayedCounts(state.pendingCounts);
+}
+
+function schedulePendingDisplay(now = performance.now()) {
+  if (!state.pendingCounts || state.displayFrameTimer) return;
+  const elapsed = now - state.lastDisplayFrameAt;
+  const delay = Math.max(
+    0,
+    getDisplayFrameIntervalMs(state.frameRateHz) - elapsed,
+  );
+  state.displayFrameTimer = window.setTimeout(displayPendingCounts, delay);
+}
+
+function queueCountsForDisplay(filteredCounts, now = performance.now()) {
+  if (shouldDisplayFrame(
+    state.lastDisplayFrameAt,
+    now,
+    state.frameRateHz,
+  )) {
+    clearDisplayFrameTimer();
+    updateDisplayedCounts(filteredCounts);
+    return;
+  }
+
+  // The serial parser keeps running; only the newest not-yet-displayed frame
+  // is retained so a slow display never builds an unbounded frame backlog.
+  state.pendingCounts = filteredCounts;
+  schedulePendingDisplay(now);
+}
+
 function applyPhotonCountFrame(dataBytes) {
   if (state.acquisitionPaused
       || dataBytes.length !== PHOTON_FRAME_PAYLOAD_LENGTH) return false;
 
   const decodedWords = new Array(PIXEL_COUNT);
+  const rawCounts = new Uint16Array(PIXEL_COUNT);
   for (let index = 0; index < PIXEL_COUNT; index += 1) {
     const byteIndex = index * 2;
     const word = (dataBytes[byteIndex] << 8) | dataBytes[byteIndex + 1];
     const decoded = decodePhotonCountWord(word);
     decodedWords[index] = decoded;
-    state.counts[index] = decoded.count;
+    rawCounts[index] = decoded.count;
     state.overflowBits[index] = decoded.overflowBits;
   }
+  state.rawCounts = rawCounts;
   state.latestDecodedWords = decodedWords;
-  state.frameCount += 1;
-  state.lastFrameAt = performance.now();
+  state.receivedFrameCount += 1;
+  const now = performance.now();
+  state.lastFrameAt = now;
   state.hardwareInputDetected = true;
 
-  const frame = buildPhotonCountFrame(state.counts);
-  state.simulatedText =
-    `[${timeLabel()}] FRAME ${String(state.frameCount).padStart(6, "0")}`
-    + ` · ${FRAME_WIDTH}×${FRAME_HEIGHT} · ${decodedWords.length} POINTS\n`
-    + `${frame.text}\n`;
+  const filteredCounts = applyBackgroundFilter(rawCounts);
+  queueCountsForDisplay(filteredCounts, now);
   updateAcquisitionState();
   scheduleRealInputIdle();
-  scheduleRender();
   return true;
 }
 
@@ -272,6 +393,8 @@ function renderMetrics() {
     }
   }
   elements.frameCount.textContent = state.frameCount.toLocaleString("zh-CN");
+  elements.frameCountDetail.textContent =
+    `已解析 ${state.receivedFrameCount.toLocaleString("zh-CN")} 个固定帧`;
   elements.windowMetric.textContent = formatNumber(state.activeWindowUs);
   elements.totalCount.textContent = total.toLocaleString("zh-CN");
   elements.maxCount.textContent = String(maximum);
@@ -293,14 +416,6 @@ function renderAll() {
   elements.simulatedSerialData.value = state.simulatedText;
   elements.simulatedSerialData.scrollTop =
     elements.simulatedSerialData.scrollHeight;
-}
-
-function scheduleRender() {
-  if (state.renderTimer) return;
-  state.renderTimer = window.setTimeout(() => {
-    state.renderTimer = null;
-    renderAll();
-  }, UI_REFRESH_INTERVAL_MS);
 }
 
 function updateAcquisitionState() {
@@ -607,6 +722,75 @@ export function generatePhotonCounts(frameNumber) {
   return applyBadPixelMask(counts);
 }
 
+function applyBackgroundSettings() {
+  let noiseValues;
+  try {
+    noiseValues = parseBackgroundNoiseValues(
+      elements.backgroundNoiseValues.value,
+    );
+  } catch (error) {
+    showToast(error.message, "error");
+    return;
+  }
+
+  const threshold = numericValue(elements.backgroundThreshold, NaN);
+  const subtract = numericValue(elements.backgroundSubtract, NaN);
+  if (!Number.isInteger(threshold) || threshold < 0 || threshold > 255) {
+    showToast("背景阈值必须是 0～255 之间的整数", "error");
+    return;
+  }
+  if (!Number.isInteger(subtract) || subtract < 0 || subtract > 255) {
+    showToast("背景扣除值必须是 0～255 之间的整数", "error");
+    return;
+  }
+
+  state.backgroundFilter = {
+    enabled: elements.backgroundFilterEnabled.checked,
+    noiseValues,
+    threshold,
+    subtract,
+  };
+
+  if (state.rawCounts) {
+    clearDisplayFrameTimer();
+    updateDisplayedCounts(
+      applyBackgroundFilter(state.rawCounts),
+      false,
+    );
+  }
+  showToast(
+    state.backgroundFilter.enabled
+      ? "背景过滤设置已应用"
+      : "背景过滤已关闭",
+    "success",
+  );
+}
+
+function updateFrameRateLimit(showConfirmation = false) {
+  const frameRateHz = numericValue(elements.frameRateHz, NaN);
+  if (!Number.isFinite(frameRateHz)
+      || frameRateHz < 1
+      || frameRateHz > 60) {
+    elements.frameRateHz.value = String(state.frameRateHz);
+    showToast("页面显示帧率应在 1～60 Hz 之间", "error");
+    return;
+  }
+
+  state.frameRateHz = frameRateHz;
+  if (state.pendingCounts) {
+    clearDisplayFrameTimer();
+    const now = performance.now();
+    if (shouldDisplayFrame(state.lastDisplayFrameAt, now, frameRateHz)) {
+      displayPendingCounts();
+    } else {
+      schedulePendingDisplay(now);
+    }
+  }
+  if (showConfirmation) {
+    showToast(`页面显示刷新上限已设为 ${formatNumber(frameRateHz)} Hz`, "success");
+  }
+}
+
 function setConnectionState(connected) {
   state.connected = connected;
   elements.connectionBadge.classList.toggle("online", connected);
@@ -620,9 +804,12 @@ function setConnectionState(connected) {
   if (!connected) {
     state.lastRxAt = 0;
     state.lastFrameAt = 0;
+    state.lastDisplayFrameAt = 0;
     state.hardwareInputDetected = false;
     state.acquisitionPaused = false;
     state.rxFrameBuffer = new Uint8Array(0);
+    state.pendingCounts = null;
+    clearDisplayFrameTimer();
     if (state.rxIdleTimer) {
       window.clearTimeout(state.rxIdleTimer);
       state.rxIdleTimer = null;
@@ -768,10 +955,15 @@ function setViewMode(mode) {
 }
 
 function clearData() {
+  clearDisplayFrameTimer();
+  state.rawCounts = null;
   state.counts.fill(0);
+  state.pendingCounts = null;
   state.overflowBits.fill(0);
   state.latestDecodedWords = [];
   state.frameCount = 0;
+  state.receivedFrameCount = 0;
+  state.lastDisplayFrameAt = 0;
   state.simulatedText = "";
   elements.simulatedSerialData.value = "";
   renderAll();
@@ -818,6 +1010,14 @@ function bindEvents() {
   elements.sendWindowBtn.addEventListener("click", sendCountWindowCommand);
   elements.numericViewBtn.addEventListener("click", () => setViewMode("numeric"));
   elements.imageViewBtn.addEventListener("click", () => setViewMode("image"));
+  elements.applyBackgroundBtn.addEventListener(
+    "click",
+    applyBackgroundSettings,
+  );
+  elements.frameRateHz.addEventListener(
+    "change",
+    () => updateFrameRateLimit(true),
+  );
   elements.pauseAcquisitionBtn.addEventListener(
     "click",
     toggleAcquisitionPause,
@@ -864,6 +1064,7 @@ async function initialize() {
   createMatrix();
   bindEvents();
   updateWindowCommandPreview();
+  updateFrameRateLimit();
   setConnectionState(false);
   renderAll();
 }

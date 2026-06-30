@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "smoke": "node browser-smoke.mjs",
-    "test": "node protocol.test.mjs",
+    "test": "node protocol.test.mjs && node photon-count.test.mjs",
     "start": "node server.mjs"
   }
 }
