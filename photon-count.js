@@ -16,8 +16,10 @@ const PIXEL_COUNT = PHOTON_PIXEL_COUNT;
 const REAL_RX_HOLD_MS = 400;
 const MAX_TEXT_CHARS = 50000;
 const DEFAULT_FRAME_RATE_HZ = 10;
+const DEFAULT_AVERAGE_FRAME_COUNT = 10;
+const DEFAULT_BACKGROUND_FRAME_COUNT = 20;
 const DEFAULT_BACKGROUND_NOISE_VALUES = Object.freeze([
-  1, 2, 3, 6, 12, 24, 48, 96, 128, 192, 240,
+  1, 2, 3, 4, 6, 8, 11, 12, 15, 16, 20, 24, 32, 48, 64, 96, 128, 192, 240,
 ]);
 
 const elements = typeof document === "undefined"
@@ -46,10 +48,19 @@ const state = {
   frameRateHz: DEFAULT_FRAME_RATE_HZ,
   activeWindowUs: 10,
   rawCounts: null,
-  counts: new Uint16Array(PIXEL_COUNT),
-  pendingCounts: null,
+  averagedCounts: null,
+  displayCounts: new Uint16Array(PIXEL_COUNT),
+  pendingDisplayCounts: null,
+  averageFrameCount: DEFAULT_AVERAGE_FRAME_COUNT,
+  avgSum: new Uint32Array(PIXEL_COUNT),
+  avgFrameCounter: 0,
   overflowBits: new Uint8Array(PIXEL_COUNT),
   latestDecodedWords: [],
+  backgroundCounts: null,
+  backgroundCaptureSum: new Uint32Array(PIXEL_COUNT),
+  backgroundFrameCount: DEFAULT_BACKGROUND_FRAME_COUNT,
+  backgroundFramesCollected: 0,
+  backgroundCollecting: false,
   backgroundFilter: {
     enabled: true,
     noiseValues: new Set(DEFAULT_BACKGROUND_NOISE_VALUES),
@@ -95,7 +106,10 @@ export function parseBackgroundNoiseValues(value) {
 
 export function applyBackgroundFilter(
   counts,
-  settings = state.backgroundFilter,
+  settings = {
+    ...state.backgroundFilter,
+    backgroundCounts: state.backgroundCounts,
+  },
 ) {
   const filteredCounts = new Uint16Array(counts.length);
   if (!settings.enabled) {
@@ -106,15 +120,50 @@ export function applyBackgroundFilter(
   const noiseValues = settings.noiseValues instanceof Set
     ? settings.noiseValues
     : new Set(settings.noiseValues ?? []);
+  const backgroundCounts = settings.backgroundCounts ?? null;
+  if (backgroundCounts && backgroundCounts.length !== counts.length) {
+    throw new RangeError("背景数据长度必须与计数数据一致");
+  }
   const threshold = clamp(Number(settings.threshold) || 0, 0, 255);
   const subtract = clamp(Number(settings.subtract) || 0, 0, 255);
   for (let index = 0; index < counts.length; index += 1) {
-    const count = counts[index];
-    filteredCounts[index] = noiseValues.has(count) || count <= threshold
-      ? 0
-      : Math.max(0, count - subtract);
+    let value = Math.max(
+      0,
+      counts[index] - (backgroundCounts?.[index] ?? 0),
+    );
+    if (noiseValues.has(value) || value <= threshold) {
+      value = 0;
+    } else {
+      value = Math.max(0, value - subtract);
+    }
+    filteredCounts[index] = clamp(Math.round(value), 0, 255);
   }
   return filteredCounts;
+}
+
+export function accumulateCountFrame(sum, counts) {
+  if (sum.length !== counts.length) {
+    throw new RangeError("累计数组长度必须与计数帧一致");
+  }
+  for (let index = 0; index < counts.length; index += 1) {
+    sum[index] += counts[index];
+  }
+  return sum;
+}
+
+export function calculateAveragedCounts(sum, frameCount) {
+  if (!Number.isInteger(frameCount) || frameCount <= 0) {
+    throw new RangeError("平均帧数必须是正整数");
+  }
+  const averagedCounts = new Uint16Array(sum.length);
+  for (let index = 0; index < sum.length; index += 1) {
+    averagedCounts[index] = clamp(
+      Math.round(sum[index] / frameCount),
+      0,
+      255,
+    );
+  }
+  return averagedCounts;
 }
 
 export function getDisplayFrameIntervalMs(frameRateHz) {
@@ -198,27 +247,29 @@ function clearDisplayFrameTimer() {
 }
 
 function updateDisplayedCounts(counts, incrementFrameCount = true) {
-  state.counts.set(counts);
-  state.pendingCounts = null;
+  state.displayCounts.set(counts);
+  state.pendingDisplayCounts = null;
   state.lastDisplayFrameAt = performance.now();
   if (incrementFrameCount) state.frameCount += 1;
 
-  const frame = buildPhotonCountFrame(state.counts);
+  const frame = buildPhotonCountFrame(state.displayCounts);
   state.simulatedText =
     `[${timeLabel()}] FRAME ${String(state.frameCount).padStart(6, "0")}`
-    + ` · ${FRAME_WIDTH}×${FRAME_HEIGHT} · ${state.counts.length} POINTS\n`
+    + ` · ${FRAME_WIDTH}×${FRAME_HEIGHT}`
+    + ` · ${state.displayCounts.length} POINTS`
+    + ` · AVG ${state.averageFrameCount}\n`
     + `${frame.text}\n`;
   renderAll();
 }
 
 function displayPendingCounts() {
   state.displayFrameTimer = null;
-  if (!state.pendingCounts) return;
-  updateDisplayedCounts(state.pendingCounts);
+  if (!state.pendingDisplayCounts) return;
+  updateDisplayedCounts(state.pendingDisplayCounts);
 }
 
 function schedulePendingDisplay(now = performance.now()) {
-  if (!state.pendingCounts || state.displayFrameTimer) return;
+  if (!state.pendingDisplayCounts || state.displayFrameTimer) return;
   const elapsed = now - state.lastDisplayFrameAt;
   const delay = Math.max(
     0,
@@ -240,8 +291,70 @@ function queueCountsForDisplay(filteredCounts, now = performance.now()) {
 
   // The serial parser keeps running; only the newest not-yet-displayed frame
   // is retained so a slow display never builds an unbounded frame backlog.
-  state.pendingCounts = filteredCounts;
+  state.pendingDisplayCounts = filteredCounts;
   schedulePendingDisplay(now);
+}
+
+function updateAverageProgress() {
+  elements.averageProgress.textContent =
+    `平均进度：${state.avgFrameCounter}/${state.averageFrameCount}`;
+}
+
+function updateBackgroundStatus() {
+  elements.backgroundStatus.classList.remove("idle", "collecting", "ready");
+  if (state.backgroundCollecting) {
+    elements.backgroundStatus.classList.add("collecting");
+    elements.backgroundStatus.querySelector("span").textContent =
+      `背景状态：正在采集 ${state.backgroundFramesCollected}`
+      + `/${state.backgroundFrameCount}`;
+  } else if (state.backgroundCounts) {
+    elements.backgroundStatus.classList.add("ready");
+    elements.backgroundStatus.querySelector("span").textContent =
+      `背景状态：已采集（${state.backgroundFrameCount} 帧）`;
+  } else {
+    elements.backgroundStatus.classList.add("idle");
+    elements.backgroundStatus.querySelector("span").textContent =
+      "背景状态：未采集";
+  }
+}
+
+function accumulateBackgroundFrame(rawCounts) {
+  if (!state.backgroundCollecting) return false;
+
+  accumulateCountFrame(state.backgroundCaptureSum, rawCounts);
+  state.backgroundFramesCollected += 1;
+  if (state.backgroundFramesCollected < state.backgroundFrameCount) {
+    updateBackgroundStatus();
+    return false;
+  }
+
+  state.backgroundCounts = calculateAveragedCounts(
+    state.backgroundCaptureSum,
+    state.backgroundFrameCount,
+  );
+  state.backgroundCollecting = false;
+  state.backgroundCaptureSum.fill(0);
+  updateBackgroundStatus();
+  showToast("固定背景采集完成", "success");
+  return true;
+}
+
+function accumulateAverageFrame(rawCounts) {
+  accumulateCountFrame(state.avgSum, rawCounts);
+  state.avgFrameCounter += 1;
+  if (state.avgFrameCounter < state.averageFrameCount) {
+    updateAverageProgress();
+    return null;
+  }
+
+  state.averagedCounts = calculateAveragedCounts(
+    state.avgSum,
+    state.averageFrameCount,
+  );
+  state.avgSum.fill(0);
+  state.avgFrameCounter = 0;
+  updateAverageProgress();
+  return state.averagedCounts;
 }
 
 function applyPhotonCountFrame(dataBytes) {
@@ -265,8 +378,16 @@ function applyPhotonCountFrame(dataBytes) {
   state.lastFrameAt = now;
   state.hardwareInputDetected = true;
 
-  const filteredCounts = applyBackgroundFilter(rawCounts);
-  queueCountsForDisplay(filteredCounts, now);
+  const backgroundCompleted = accumulateBackgroundFrame(rawCounts);
+  const averagedCounts = accumulateAverageFrame(rawCounts);
+  if (averagedCounts) {
+    queueCountsForDisplay(applyBackgroundFilter(averagedCounts), now);
+  } else if (backgroundCompleted && state.averagedCounts) {
+    queueCountsForDisplay(
+      applyBackgroundFilter(state.averagedCounts),
+      now,
+    );
+  }
   updateAcquisitionState();
   scheduleRealInputIdle();
   return true;
@@ -366,7 +487,7 @@ function createMatrix() {
 
 function renderMatrix() {
   for (let index = 0; index < PIXEL_COUNT; index += 1) {
-    const count = state.counts[index];
+    const count = state.displayCounts[index];
     const cell = state.cells[index];
     const row = Math.floor(index / 32);
     const col = index % 32;
@@ -385,7 +506,7 @@ function renderMetrics() {
   let maximum = 0;
   let maximumIndex = 0;
   for (let index = 0; index < PIXEL_COUNT; index += 1) {
-    const value = state.counts[index];
+    const value = state.displayCounts[index];
     total += value;
     if (value > maximum) {
       maximum = value;
@@ -751,19 +872,65 @@ function applyBackgroundSettings() {
     subtract,
   };
 
-  if (state.rawCounts) {
-    clearDisplayFrameTimer();
-    updateDisplayedCounts(
-      applyBackgroundFilter(state.rawCounts),
-      false,
-    );
-  }
+  reprocessLatestAverage();
   showToast(
     state.backgroundFilter.enabled
       ? "背景过滤设置已应用"
       : "背景过滤已关闭",
     "success",
   );
+}
+
+function reprocessLatestAverage() {
+  if (!state.averagedCounts) return;
+  clearDisplayFrameTimer();
+  updateDisplayedCounts(
+    applyBackgroundFilter(state.averagedCounts),
+    false,
+  );
+}
+
+function startBackgroundCapture() {
+  const frameCount = numericValue(elements.backgroundFrameCount, NaN);
+  if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 1000) {
+    showToast("背景帧数必须是 1～1000 之间的整数", "error");
+    return;
+  }
+
+  state.backgroundFrameCount = frameCount;
+  state.backgroundFramesCollected = 0;
+  state.backgroundCaptureSum.fill(0);
+  state.backgroundCounts = null;
+  state.backgroundCollecting = true;
+  updateBackgroundStatus();
+  showToast(`将从后续完整串口帧采集 ${frameCount} 帧背景`, "success");
+}
+
+function clearBackground() {
+  state.backgroundCounts = null;
+  state.backgroundCollecting = false;
+  state.backgroundFramesCollected = 0;
+  state.backgroundCaptureSum.fill(0);
+  updateBackgroundStatus();
+  reprocessLatestAverage();
+  showToast("固定背景已清除", "success");
+}
+
+function updateAverageFrameCount(showConfirmation = false) {
+  const frameCount = numericValue(elements.averageFrameCount, NaN);
+  if (!Number.isInteger(frameCount) || frameCount < 1 || frameCount > 100) {
+    elements.averageFrameCount.value = String(state.averageFrameCount);
+    showToast("显示平均帧数必须是 1～100 之间的整数", "error");
+    return;
+  }
+
+  state.averageFrameCount = frameCount;
+  state.avgSum.fill(0);
+  state.avgFrameCounter = 0;
+  updateAverageProgress();
+  if (showConfirmation) {
+    showToast(`每 ${frameCount} 个完整帧计算一次显示平均值`, "success");
+  }
 }
 
 function updateFrameRateLimit(showConfirmation = false) {
@@ -777,7 +944,7 @@ function updateFrameRateLimit(showConfirmation = false) {
   }
 
   state.frameRateHz = frameRateHz;
-  if (state.pendingCounts) {
+  if (state.pendingDisplayCounts) {
     clearDisplayFrameTimer();
     const now = performance.now();
     if (shouldDisplayFrame(state.lastDisplayFrameAt, now, frameRateHz)) {
@@ -808,12 +975,15 @@ function setConnectionState(connected) {
     state.hardwareInputDetected = false;
     state.acquisitionPaused = false;
     state.rxFrameBuffer = new Uint8Array(0);
-    state.pendingCounts = null;
+    state.pendingDisplayCounts = null;
+    state.avgSum.fill(0);
+    state.avgFrameCounter = 0;
     clearDisplayFrameTimer();
     if (state.rxIdleTimer) {
       window.clearTimeout(state.rxIdleTimer);
       state.rxIdleTimer = null;
     }
+    updateAverageProgress();
   }
   updateAcquisitionState();
 }
@@ -957,8 +1127,11 @@ function setViewMode(mode) {
 function clearData() {
   clearDisplayFrameTimer();
   state.rawCounts = null;
-  state.counts.fill(0);
-  state.pendingCounts = null;
+  state.averagedCounts = null;
+  state.displayCounts.fill(0);
+  state.pendingDisplayCounts = null;
+  state.avgSum.fill(0);
+  state.avgFrameCounter = 0;
   state.overflowBits.fill(0);
   state.latestDecodedWords = [];
   state.frameCount = 0;
@@ -966,6 +1139,7 @@ function clearData() {
   state.lastDisplayFrameAt = 0;
   state.simulatedText = "";
   elements.simulatedSerialData.value = "";
+  updateAverageProgress();
   renderAll();
 }
 
@@ -973,7 +1147,7 @@ function exportDataCsv() {
   const rows = [["row", "col", "count"]];
   for (let row = 0; row < 32; row += 1) {
     for (let col = 0; col < 32; col += 1) {
-      rows.push([row, col, state.counts[row * 32 + col]]);
+      rows.push([row, col, state.displayCounts[row * 32 + col]]);
     }
   }
   const csv = `\ufeff${rows.map((row) => row.join(",")).join("\r\n")}`;
@@ -1013,6 +1187,18 @@ function bindEvents() {
   elements.applyBackgroundBtn.addEventListener(
     "click",
     applyBackgroundSettings,
+  );
+  elements.captureBackgroundBtn.addEventListener(
+    "click",
+    startBackgroundCapture,
+  );
+  elements.clearBackgroundBtn.addEventListener(
+    "click",
+    clearBackground,
+  );
+  elements.averageFrameCount.addEventListener(
+    "change",
+    () => updateAverageFrameCount(true),
   );
   elements.frameRateHz.addEventListener(
     "change",
@@ -1064,7 +1250,9 @@ async function initialize() {
   createMatrix();
   bindEvents();
   updateWindowCommandPreview();
+  updateAverageFrameCount();
   updateFrameRateLimit();
+  updateBackgroundStatus();
   setConnectionState(false);
   renderAll();
 }

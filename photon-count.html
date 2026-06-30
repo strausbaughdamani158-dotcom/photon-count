@@ -103,7 +103,7 @@
         <label class="field">
           <span>噪声值屏蔽列表</span>
           <input id="backgroundNoiseValues" type="text"
-            value="1,2,3,6,12,24,48,96,128,192,240"
+            value="1,2,3,4,6,8,11,12,15,16,20,24,32,48,64,96,128,192,240"
             spellcheck="false" aria-describedby="backgroundFilterHelp">
         </label>
         <div class="background-number-fields">
@@ -118,12 +118,30 @@
               min="0" max="255" step="1">
           </label>
         </div>
+        <label class="field">
+          <span>背景帧数</span>
+          <input id="backgroundFrameCount" type="number" value="20"
+            min="1" max="1000" step="1">
+        </label>
+        <div class="background-actions">
+          <button id="captureBackgroundBtn" class="button primary" type="button">
+            采集背景
+          </button>
+          <button id="clearBackgroundBtn" class="button" type="button">
+            清除背景
+          </button>
+        </div>
+        <div id="backgroundStatus" class="background-status idle"
+          role="status" aria-live="polite">
+          <i></i>
+          <span>背景状态：未采集</span>
+        </div>
         <button id="applyBackgroundBtn" class="button primary full" type="button">
           应用背景设置
         </button>
         <p id="backgroundFilterHelp" class="help-text background-help">
-          指定噪声值或不高于阈值的像素会置 0；背景扣除后结果不小于 0。
-          屏蔽列表不作用于串口原始字节。
+          学习背景按像素位置扣除；指定噪声值或不高于阈值的像素会置 0。
+          所有处理仅作用于 displayCounts，不作用于 rawCounts 或串口原始字节。
         </p>
       </section>
 
@@ -132,6 +150,14 @@
           <h2>采集控制</h2>
           <span id="laneProgress">1024 点/帧</span>
         </div>
+        <label class="field">
+          <span>显示平均帧数</span>
+          <input id="averageFrameCount" type="number" value="10"
+            min="1" max="100" step="1">
+        </label>
+        <p id="averageProgress" class="average-progress" role="status">
+          平均进度：0/10
+        </p>
         <label class="field">
           <span>采集帧率 Hz</span>
           <div class="input-unit">
@@ -199,8 +225,8 @@
         </div>
         <footer class="matrix-footer">
           <span>每个像素取低 8bit 作为光子计数值</span>
-          <span>计数范围 0～255</span>
-          <span>高于 8bit 的位不作为计数显示</span>
+          <span>默认每 10 个完整帧平均一次</span>
+          <span>FPGA row-major 顺序直接显示，不做 16 路重排</span>
           <span>按固定 2051 字节解析；payload 中的 5A 不截断帧</span>
         </footer>
       </section>

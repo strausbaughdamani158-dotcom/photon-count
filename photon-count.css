@@ -112,9 +112,67 @@
   min-width: 0;
 }
 
+.background-actions {
+  margin-bottom: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.background-status {
+  min-height: 32px;
+  margin-bottom: 10px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-dark);
+  font-size: 9px;
+}
+
+.background-status i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: #53606d;
+}
+
+.background-status.collecting {
+  color: var(--amber);
+  border-color: rgba(224, 169, 79, 0.35);
+}
+
+.background-status.collecting i {
+  background: var(--amber);
+}
+
+.background-status.ready {
+  color: var(--green);
+  border-color: rgba(89, 183, 143, 0.35);
+}
+
+.background-status.ready i {
+  background: var(--green);
+}
+
 .background-help {
   line-height: 1.55;
   text-align: left;
+}
+
+.average-progress {
+  margin: -2px 0 11px;
+  padding: 7px 9px;
+  color: #a8dbe7;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel-dark);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 9px;
 }
 
 .frame-rate-help {
