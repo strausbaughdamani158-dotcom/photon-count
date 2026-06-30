@@ -409,7 +409,7 @@ try {
   await evaluate(connection, `
     window.__photonFrame = [0xAA, 0x55];
     const photonWords = [0x000A, 0x000B, 0x00FF, 0x0100];
-    while (photonWords.length < 64) photonWords.push(photonWords.length);
+    while (photonWords.length < 1024) photonWords.push(photonWords.length & 0xFF);
     for (const word of photonWords) {
       window.__photonFrame.push((word >>> 8) & 0xFF, word & 0xFF);
     }
@@ -584,7 +584,7 @@ try {
       || photonSummary.activeWindowLabel !== "20 μs"
       || photonSummary.sentWindowCommand !== "SET_COUNT_WINDOW 20.000us\r\n"
       || photonSummary.cellCount !== 1024
-      || photonSummary.frameCount < 30 || photonSummary.laneProgress !== "64 点/帧") {
+      || photonSummary.frameCount < 30 || photonSummary.laneProgress !== "1024 点/帧") {
     throw new Error("计数窗口命令、触发门控或完整帧计数异常");
   }
   if (photonLines.length !== 16
@@ -601,8 +601,8 @@ try {
       || photonSummary.row0col1 !== 11
       || photonSummary.row0col2 !== 255
       || photonSummary.row0col3 !== 0
-      || photonSummary.row2col0 !== 0) {
-    throw new Error("真实光子计数帧解析、8-bit 解码或 64 点补零异常");
+      || photonSummary.row2col0 !== 64) {
+    throw new Error("真实光子计数固定帧解析、8-bit 解码或 1024 点矩阵填充异常");
   }
   if (!photonSummary.imageMode || photonSummary.modeTag !== "灰度成像"
       || photonSummary.row0col0Gray

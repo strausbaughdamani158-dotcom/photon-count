@@ -1,6 +1,14 @@
 export const BINARY_FRAME_SIZE = 16;
 export const FRAME_HEADER = [0xaa, 0x55];
 export const PHOTON_FRAME_TAIL = 0x5a;
+export const PHOTON_FRAME_WIDTH = 32;
+export const PHOTON_FRAME_HEIGHT = 32;
+export const PHOTON_PIXEL_COUNT = PHOTON_FRAME_WIDTH * PHOTON_FRAME_HEIGHT;
+export const PHOTON_BYTES_PER_PIXEL = 2;
+export const PHOTON_FRAME_PAYLOAD_LENGTH =
+  PHOTON_PIXEL_COUNT * PHOTON_BYTES_PER_PIXEL;
+export const PHOTON_FRAME_BYTE_LENGTH =
+  FRAME_HEADER.length + PHOTON_FRAME_PAYLOAD_LENGTH + 1;
 export const CHIP_DATA_MASK = 0x07ff;
 export const CHIP_NO_DATA_VALUE = 0x0003;
 export const CHIP_WORDS_PER_LANE = 64;
@@ -360,17 +368,21 @@ export function extractPhotonCountFrames(existingBuffer, incomingBytes) {
       buffer = buffer.slice(headerIndex);
     }
 
-    let tailIndex = -1;
-    for (let index = FRAME_HEADER.length; index < buffer.length; index += 2) {
-      if (buffer[index] === PHOTON_FRAME_TAIL) {
-        tailIndex = index;
-        break;
-      }
-    }
-    if (tailIndex < 0) break;
+    if (buffer.length < PHOTON_FRAME_BYTE_LENGTH) break;
 
-    frames.push(buffer.slice(FRAME_HEADER.length, tailIndex));
-    buffer = buffer.slice(tailIndex + 1);
+    if (buffer[PHOTON_FRAME_BYTE_LENGTH - 1] !== PHOTON_FRAME_TAIL) {
+      discardedBytes += 1;
+      buffer = buffer.slice(1);
+      continue;
+    }
+
+    frames.push(
+      buffer.slice(
+        FRAME_HEADER.length,
+        FRAME_HEADER.length + PHOTON_FRAME_PAYLOAD_LENGTH,
+      ),
+    );
+    buffer = buffer.slice(PHOTON_FRAME_BYTE_LENGTH);
   }
 
   return {

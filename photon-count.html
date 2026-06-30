@@ -41,14 +41,15 @@
         <label class="field">
           <span>波特率</span>
           <select id="baudRate">
-            <option value="115200" selected>115200</option>
+            <option value="115200">115200</option>
             <option value="230400">230400</option>
             <option value="460800">460800</option>
-            <option value="921600">921600</option>
+            <option value="921600" selected>921600</option>
             <option value="1000000">1000000</option>
             <option value="2000000">2000000</option>
           </select>
         </label>
+        <p class="help-text">1024 点全矩阵建议使用 921600；115200 下刷新较慢。</p>
         <div class="button-row">
           <button id="connectBtn" class="button primary" type="button">选择并连接串口</button>
           <button id="disconnectBtn" class="button" type="button" disabled>断开</button>
@@ -93,15 +94,8 @@
       <section class="panel gate-panel">
         <div class="panel-title">
           <h2>采集控制</h2>
-          <span id="laneProgress">64 点/帧</span>
+          <span id="laneProgress">1024 点/帧</span>
         </div>
-        <label class="field">
-          <span>演示帧率</span>
-          <div class="input-unit">
-            <input id="frameRateHz" type="number" value="100" min="1" max="500" step="1">
-            <b>Hz</b>
-          </div>
-        </label>
         <div id="acquisitionState" class="gate-state waiting">
           <i></i>
           <div>
@@ -133,7 +127,7 @@
 
     <section class="workspace">
       <div class="metrics count-metrics">
-        <article><span>完整帧数</span><strong id="frameCount">0</strong><small>AA 55 ... 5A</small></article>
+        <article><span>完整帧数</span><strong id="frameCount">0</strong><small>固定 2051 字节</small></article>
         <article><span>计数窗口</span><strong id="windowMetric">10</strong><small>当前生效值 / μs</small></article>
         <article><span>当前总计数</span><strong id="totalCount">0</strong><small>1024 像素求和</small></article>
         <article><span>最大计数</span><strong id="maxCount">0</strong><small id="maxPixel">R0C0</small></article>
@@ -160,6 +154,7 @@
           <span>每个像素取低 8bit 作为光子计数值</span>
           <span>计数范围 0～255</span>
           <span>高于 8bit 的位不作为计数显示</span>
+          <span>按固定 2051 字节解析；payload 中的 5A 不截断帧</span>
         </footer>
       </section>
 
@@ -175,7 +170,7 @@
           placeholder="收到完整二进制帧后，这里显示解码后的计数帧。"></textarea>
         <footer>
           <span id="simulatedFrameCount">0 帧</span>
-          <span>当前 64 点 / 帧 · 兼容 1024 点</span>
+          <span>AA 55 + 1024×16bit + 5A · 完整 32×32</span>
         </footer>
       </section>
     </section>
