@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Photon count browser tests</title>
+</head>
+<body data-result="RUNNING">
+  <pre id="output">RUNNING</pre>
+  <script type="module">
+    import {
+      DEFAULT_NOISE_MASK_VALUES,
+      accumulateCountFrame,
+      appendRxBytes,
+      applyNoiseMask,
+      calculateAveragedCounts,
+      decodePhotonPayload,
+      scanPhotonCountFrames,
+    } from "./photon-count.js";
+    import {
+      PHOTON_FRAME_BYTE_LENGTH,
+      PHOTON_PIXEL_COUNT,
+    } from "./protocol.js";
+
+    const assert = (condition, message) => {
+      if (!condition) throw new Error(message);
+    };
+
+    try {
+      assert(PHOTON_FRAME_BYTE_LENGTH === 2051, "frame length");
+      assert(PHOTON_PIXEL_COUNT === 1024, "pixel count");
+
+      const frame = new Uint8Array(2051);
+      frame.set([0xaa, 0x55]);
+      for (let index = 0; index < 1024; index += 1) {
+        frame[2 + index * 2] = 0;
+        frame[3 + index * 2] = index & 0xff;
+      }
+      frame[2] = 0;
+      frame[3] = 10;
+      frame[4] = 0;
+      frame[5] = 255;
+      frame[6] = 1;
+      frame[7] = 0;
+      frame[2 + 90 * 2 + 1] = 0x5a;
+      frame[2050] = 0x5a;
+
+      const snapshot = frame.slice();
+      let buffer = appendRxBytes(new Uint8Array(0), frame.slice(0, 1000));
+      let result = scanPhotonCountFrames(buffer);
+      assert(result.frames.length === 0, "partial frame");
+      buffer = appendRxBytes(buffer, frame.slice(1000));
+      result = scanPhotonCountFrames(buffer, result.nextOffset);
+      assert(result.frames.length === 1, "complete frame");
+      assert(buffer.every((value, index) => value === snapshot[index]), "rxBuffer unchanged");
+
+      const counts = decodePhotonPayload(result.frames[0]);
+      assert(counts.length === 1024, "1024 decoded points");
+      assert(counts[0] === 10, "0x000A");
+      assert(counts[1] === 255, "0x00FF");
+      assert(counts[2] === 0, "0x0100");
+      assert(counts[90] === 90, "payload 0x5A");
+      assert(counts[32] === 32, "row-major");
+
+      const invalidTail = frame.slice();
+      invalidTail[2050] = 0;
+      const invalidThenValid = appendRxBytes(invalidTail, frame);
+      const recovered = scanPhotonCountFrames(invalidThenValid);
+      assert(recovered.frames.length === 1, "tail only at fixed byte2050");
+
+      const sum = new Uint32Array(1024);
+      for (let value = 10; value <= 100; value += 10) {
+        accumulateCountFrame(sum, new Uint16Array(1024).fill(value));
+      }
+      const average = calculateAveragedCounts(sum, 10);
+      assert(average.every((value) => value === 55), "ten-frame average");
+
+      const maskInput = Uint16Array.from([...DEFAULT_NOISE_MASK_VALUES, 5, 55, 255]);
+      const masked = applyNoiseMask(
+        maskInput,
+        true,
+        new Set(DEFAULT_NOISE_MASK_VALUES),
+      );
+      assert(
+        DEFAULT_NOISE_MASK_VALUES.every((_, index) => masked[index] === 0),
+        "noise values",
+      );
+      assert(masked.at(-3) === 5 && masked.at(-2) === 55 && masked.at(-1) === 255,
+        "non-noise values");
+
+      document.body.dataset.result = "PASS";
+      document.querySelector("#output").textContent = "PASS";
+    } catch (error) {
+      document.body.dataset.result = `FAIL: ${error.message}`;
+      document.querySelector("#output").textContent = error.stack;
+    }
+  </script>
+</body>
+</html>

@@ -2,32 +2,6 @@
   grid-template-columns: 286px minmax(760px, 1fr);
 }
 
-.view-switch {
-  padding: 3px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 3px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-dark);
-}
-
-.view-option {
-  height: 34px;
-  color: var(--muted);
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  cursor: pointer;
-  font-size: 10px;
-  font-weight: 650;
-}
-
-.view-option.active {
-  color: #071116;
-  background: var(--accent);
-}
-
 .count-metrics {
   grid-template-columns: repeat(6, minmax(105px, 1fr));
 }
@@ -68,17 +42,6 @@
   user-select: none;
 }
 
-.count-matrix.image {
-  gap: 1px;
-  background: #0a0d11;
-}
-
-.count-matrix.image .count-cell {
-  color: transparent;
-  border-color: transparent;
-  border-radius: 0;
-}
-
 .matrix-footer {
   min-height: 36px;
   padding: 0 18px;
@@ -91,79 +54,6 @@
   font-size: 8px;
 }
 
-.count-frame-panel textarea {
-  height: 260px;
-  white-space: pre;
-}
-
-.acquisition-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.background-number-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.background-filter-panel .field {
-  min-width: 0;
-}
-
-.background-actions {
-  margin-bottom: 10px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.background-status {
-  min-height: 32px;
-  margin-bottom: 10px;
-  padding: 7px 9px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--panel-dark);
-  font-size: 9px;
-}
-
-.background-status i {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: #53606d;
-}
-
-.background-status.collecting {
-  color: var(--amber);
-  border-color: rgba(224, 169, 79, 0.35);
-}
-
-.background-status.collecting i {
-  background: var(--amber);
-}
-
-.background-status.ready {
-  color: var(--green);
-  border-color: rgba(89, 183, 143, 0.35);
-}
-
-.background-status.ready i {
-  background: var(--green);
-}
-
-.background-help {
-  line-height: 1.55;
-  text-align: left;
-}
-
 .average-progress {
   margin: -2px 0 11px;
   padding: 7px 9px;
@@ -173,22 +63,6 @@
   background: var(--panel-dark);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 9px;
-}
-
-.frame-rate-help {
-  margin-top: -3px;
-  margin-bottom: 11px;
-  line-height: 1.5;
-  text-align: left;
-}
-
-.gate-state.paused {
-  border-color: rgba(224, 169, 79, 0.45);
-}
-
-.gate-state.paused > i {
-  border-radius: 2px;
-  background: var(--amber);
 }
 
 @media (max-width: 1320px) {

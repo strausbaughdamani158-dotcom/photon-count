@@ -21,9 +21,6 @@
     </div>
     <div class="topbar-status">
       <span id="serialSupport" class="support-text">正在检测 Web Serial...</span>
-      <a class="debug-toggle mode-link" href="./index.html">计时模式</a>
-      <a class="debug-toggle mode-link" href="./single-range.html">单点测距</a>
-      <button id="communicationDebugTrigger" class="debug-toggle" type="button">通信调试</button>
       <div id="connectionBadge" class="status-box">
         <i></i>
         <div><b>串口</b><small>未连接</small></div>
@@ -49,10 +46,9 @@
             <option value="2000000">2000000</option>
           </select>
         </label>
-        <p class="help-text">1024 点全矩阵建议使用 921600；115200 下刷新较慢。</p>
         <div class="button-row">
           <button id="connectBtn" class="button primary" type="button">选择并连接串口</button>
-          <button id="disconnectBtn" class="button" type="button" disabled>断开</button>
+          <button id="disconnectBtn" class="button" type="button" disabled>断开串口</button>
         </div>
       </section>
 
@@ -62,7 +58,7 @@
           <span>发送至 FPGA</span>
         </div>
         <label class="field">
-          <span>曝光时间窗口</span>
+          <span>曝光/计数时间窗口</span>
           <div class="input-unit">
             <input id="countWindowUs" type="number" value="10" min="0.1"
               max="1000000" step="0.1">
@@ -74,81 +70,15 @@
           <code id="windowCommandPreview">SET_COUNT_WINDOW 10.000us</code>
         </div>
         <button id="sendWindowBtn" class="button primary full" type="button" disabled>
-          设置计数窗口并发送
+          发送计数窗口命令
         </button>
         <p class="help-text">当前生效窗口：<b id="activeWindowLabel">10 μs</b></p>
       </section>
 
       <section class="panel">
         <div class="panel-title">
-          <h2>显示方式</h2>
-          <span>32 × 32</span>
-        </div>
-        <div class="view-switch" role="group" aria-label="计数显示方式">
-          <button id="numericViewBtn" class="view-option active" type="button">计数数字</button>
-          <button id="imageViewBtn" class="view-option" type="button">灰度成像</button>
-        </div>
-        <p class="formula">灰度值按低 8bit 光子计数映射：0 为黑，255 为白。</p>
-      </section>
-
-      <section class="panel background-filter-panel">
-        <div class="panel-title">
-          <h2>背景过滤</h2>
-          <span>作用于解析后的 count</span>
-        </div>
-        <label class="check-line">
-          <input id="backgroundFilterEnabled" type="checkbox" checked>
-          <span>启用背景过滤</span>
-        </label>
-        <label class="field">
-          <span>噪声值屏蔽列表</span>
-          <input id="backgroundNoiseValues" type="text"
-            value="1,2,3,4,6,8,11,12,15,16,20,24,32,48,64,96,128,192,240"
-            spellcheck="false" aria-describedby="backgroundFilterHelp">
-        </label>
-        <div class="background-number-fields">
-          <label class="field">
-            <span>背景阈值</span>
-            <input id="backgroundThreshold" type="number" value="0"
-              min="0" max="255" step="1">
-          </label>
-          <label class="field">
-            <span>背景扣除值</span>
-            <input id="backgroundSubtract" type="number" value="0"
-              min="0" max="255" step="1">
-          </label>
-        </div>
-        <label class="field">
-          <span>背景帧数</span>
-          <input id="backgroundFrameCount" type="number" value="20"
-            min="1" max="1000" step="1">
-        </label>
-        <div class="background-actions">
-          <button id="captureBackgroundBtn" class="button primary" type="button">
-            采集背景
-          </button>
-          <button id="clearBackgroundBtn" class="button" type="button">
-            清除背景
-          </button>
-        </div>
-        <div id="backgroundStatus" class="background-status idle"
-          role="status" aria-live="polite">
-          <i></i>
-          <span>背景状态：未采集</span>
-        </div>
-        <button id="applyBackgroundBtn" class="button primary full" type="button">
-          应用背景设置
-        </button>
-        <p id="backgroundFilterHelp" class="help-text background-help">
-          学习背景按像素位置扣除；指定噪声值或不高于阈值的像素会置 0。
-          所有处理仅作用于 displayCounts，不作用于 rawCounts 或串口原始字节。
-        </p>
-      </section>
-
-      <section class="panel gate-panel">
-        <div class="panel-title">
-          <h2>采集控制</h2>
-          <span id="laneProgress">1024 点/帧</span>
+          <h2>显示处理</h2>
+          <span>完整帧平均</span>
         </div>
         <label class="field">
           <span>显示平均帧数</span>
@@ -158,43 +88,20 @@
         <p id="averageProgress" class="average-progress" role="status">
           平均进度：0/10
         </p>
-        <label class="field">
-          <span>采集帧率 Hz</span>
-          <div class="input-unit">
-            <input id="frameRateHz" type="number" value="10"
-              min="1" max="60" step="1">
-            <b>Hz</b>
-          </div>
+        <label class="check-line">
+          <input id="noiseMaskEnabled" type="checkbox" checked>
+          <span>启用噪声值屏蔽</span>
         </label>
-        <p class="help-text frame-rate-help">
-          真实串口模式下仅限制页面显示刷新上限，不改变 FPGA 实际发送或采集频率。
-        </p>
-        <div id="acquisitionState" class="gate-state waiting">
-          <i></i>
-          <div>
-            <strong id="acquisitionStateLabel">等待串口数据</strong>
-            <span>采集状态</span>
-          </div>
-        </div>
-        <div class="acquisition-actions">
-          <button id="pauseAcquisitionBtn" class="button" type="button" disabled>
-            暂停采集
-          </button>
-          <button id="clearDataBtn" class="button" type="button">清空计数数据</button>
-        </div>
-      </section>
-
-      <section id="actualSerialPanel" class="panel io-panel is-hidden">
-        <div class="panel-title">
-          <div>
-            <span class="section-label">SERIAL INPUT</span>
-            <h2>串口通信</h2>
-          </div>
-          <button id="clearActualBtn" class="text-button" type="button">清空</button>
-        </div>
-        <textarea id="actualSerialData" readonly spellcheck="false"
-          placeholder="这里显示发送到 FPGA 的窗口命令和串口接收到的原始数据。"></textarea>
-        <footer><span id="actualByteCount">RX 0 B</span><span>16-bit HEX</span></footer>
+        <label class="field">
+          <span>噪声值屏蔽列表</span>
+          <input id="noiseMaskValues" type="text"
+            value="1,2,3,4,6,8,11,12,15,16,20,24,32,48,64,96,128,192"
+            spellcheck="false">
+        </label>
+        <p class="help-text">仅将列表中完全相等的平均值显示为 0。</p>
+        <button id="clearDataBtn" class="button full" type="button">
+          清空计数数据
+        </button>
       </section>
     </aside>
 
@@ -202,9 +109,9 @@
       <div class="metrics count-metrics">
         <article><span>显示帧数</span><strong id="frameCount">0</strong><small id="frameCountDetail">已解析 0 个固定帧</small></article>
         <article><span>计数窗口</span><strong id="windowMetric">10</strong><small>当前生效值 / μs</small></article>
-        <article><span>当前总计数</span><strong id="totalCount">0</strong><small>1024 像素求和</small></article>
+        <article><span>当前总计数</span><strong id="totalCount">0</strong><small>最终显示值求和</small></article>
         <article><span>最大计数</span><strong id="maxCount">0</strong><small id="maxPixel">R0C0</small></article>
-        <article><span>平均计数</span><strong id="averageCount">0</strong><small>每像素</small></article>
+        <article><span>平均计数</span><strong id="averageCount">0.00</strong><small>最终显示值 / 像素</small></article>
         <article><span>输入字节</span><strong id="rxBytes">0 B</strong><small id="lastRxLabel">尚未收到输入</small></article>
       </div>
 
@@ -212,38 +119,22 @@
         <div class="chart-header">
           <div>
             <span class="section-label">PHOTON COUNT MATRIX</span>
-            <h2 id="matrixTitle">32 × 32 光子计数</h2>
+            <h2>32 × 32 光子计数</h2>
           </div>
           <div class="chart-actions">
-            <span id="viewModeTag" class="tag">计数数字</span>
-            <button id="exportDataBtn" class="button small" type="button">导出数据</button>
+            <span class="tag">ROW-MAJOR</span>
+            <button id="exportDataBtn" class="button small" type="button">导出 CSV</button>
           </div>
         </div>
         <div class="matrix-scroll">
-          <div id="countMatrix" class="count-matrix numeric" role="grid"
+          <div id="countMatrix" class="count-matrix" role="grid"
             aria-label="32乘32光子计数矩阵"></div>
         </div>
         <footer class="matrix-footer">
-          <span>每个像素取低 8bit 作为光子计数值</span>
-          <span>默认每 10 个完整帧平均一次</span>
-          <span>FPGA row-major 顺序直接显示，不做 16 路重排</span>
-          <span>按固定 2051 字节解析；payload 中的 5A 不截断帧</span>
-        </footer>
-      </section>
-
-      <section class="panel io-panel acquisition count-frame-panel">
-        <div class="panel-title">
-          <div>
-            <span class="section-label">CHIP ACQUISITION OUTPUT</span>
-            <h2>芯片采集接收帧</h2>
-          </div>
-          <button id="clearSimulatedBtn" class="text-button" type="button">清空</button>
-        </div>
-        <textarea id="simulatedSerialData" readonly spellcheck="false"
-          placeholder="收到完整二进制帧后，这里显示解码后的计数帧。"></textarea>
-        <footer>
-          <span id="simulatedFrameCount">0 帧</span>
-          <span>AA 55 + 1024×16bit + 5A · 完整 32×32</span>
+          <span>pixelIndex = row × 32 + col</span>
+          <span>固定 2051 字节帧</span>
+          <span>显示值仅取 word &amp; 0xff</span>
+          <span>不做 16 路 TDC 重排</span>
         </footer>
       </section>
     </section>
